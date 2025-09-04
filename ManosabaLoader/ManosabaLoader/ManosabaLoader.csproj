@@ -57,9 +57,17 @@
       <HintPath>..\interop\Naninovel.Common.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\interop\Newtonsoft.Json.dll</HintPath>
+		<Private>False</Private>
+    </Reference>
     <Reference Include="Unity.InputSystem">
       <HintPath>..\interop\Unity.InputSystem.dll</HintPath>
       <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>..\interop\UnityEngine.AnimationModule.dll</HintPath>
+	  <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.AudioModule">
       <HintPath>..\interop\UnityEngine.AudioModule.dll</HintPath>
@@ -69,9 +77,17 @@
       <HintPath>..\interop\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>..\interop\UnityEngine.ImageConversionModule.dll</HintPath>
+		<Private>False</Private>
+    </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
       <HintPath>..\interop\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>..\interop\UnityEngine.JSONSerializeModule.dll</HintPath>
+		<Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>..\interop\UnityEngine.UI.dll</HintPath>

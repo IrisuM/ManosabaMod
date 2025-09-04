@@ -139,6 +139,8 @@ namespace ManosabaLoader
                                             "开始游戏时的起始点标签");
 
             //初始化调试器
+            ClassInjector.RegisterTypeInIl2Cpp<ModJsonSerializer>(new RegisterTypeOptions() { Interfaces = new[] { typeof(ISerializer) } });
+            ModBridgeTools.RestartServer();
             ModDebugTools.ModDebugToolsLogMessage += msg => { Log.LogMessage(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.ModDebugToolsLogDebug += msg => { Log.LogDebug(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.ModDebugToolsLogWarning += msg => { Log.LogWarning(string.Format("[ModDebugTools]\t{0}", msg)); };
@@ -172,8 +174,6 @@ namespace ManosabaLoader
 
             Log.LogInfo(Taffy_Icon);
         }
-
-        
     }
 
     public class ModDebugComponent : MonoBehaviour
@@ -187,6 +187,16 @@ namespace ManosabaLoader
         object Get_WitchTrialsScriptPlayer()
         {
             return Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();
+        }
+
+        void DumpCharacter()
+        {
+            ModDebugTools.DumpCharacter();
+        }
+
+        void OpenServer()
+        {
+            ModBridgeTools.RestartServer();   
         }
 
         void Update()
