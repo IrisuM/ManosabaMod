@@ -139,14 +139,19 @@ namespace ManosabaLoader
                                             "开始游戏时的起始点标签");
 
             //初始化调试器
-            ClassInjector.RegisterTypeInIl2Cpp<ModJsonSerializer>(new RegisterTypeOptions() { Interfaces = new[] { typeof(ISerializer) } });
-            ModBridgeTools.RestartServer();
             ModDebugTools.ModDebugToolsLogMessage += msg => { Log.LogMessage(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.ModDebugToolsLogDebug += msg => { Log.LogDebug(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.ModDebugToolsLogWarning += msg => { Log.LogWarning(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.ModDebugToolsLogError += msg => { Log.LogError(string.Format("[ModDebugTools]\t{0}", msg)); };
             ModDebugTools.Init();
-            
+            //初始化桥接器
+            ClassInjector.RegisterTypeInIl2Cpp<ModJsonSerializer>(new RegisterTypeOptions() { Interfaces = new[] { typeof(ISerializer) } });
+            ModBridgeTools.RestartServer();
+            ModMetadataGenerator.ModMetadataGeneratorLogMessage += msg => { Log.LogMessage(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
+            ModMetadataGenerator.ModMetadataGeneratorLogDebug += msg => { Log.LogDebug(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
+            ModMetadataGenerator.ModMetadataGeneratorLogWarning += msg => { Log.LogWarning(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
+            ModMetadataGenerator.ModMetadataGeneratorLogError += msg => { Log.LogError(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
+
             //初始化Mod管理器
             ModManager.ModManager.ModManagerLogMessage += msg => { Log.LogMessage(string.Format("[ModManager]\t{0}", msg)); };
             ModManager.ModManager.ModManagerLogDebug += msg => { Log.LogDebug(string.Format("[ModManager]\t{0}", msg)); };
@@ -198,6 +203,12 @@ namespace ManosabaLoader
         {
             ModBridgeTools.RestartServer();   
         }
+
+        object UpdateMeta()
+        {
+            return ModMetadataGenerator.GenerateProjectMetadata();
+        }
+ 
 
         void Update()
         {
