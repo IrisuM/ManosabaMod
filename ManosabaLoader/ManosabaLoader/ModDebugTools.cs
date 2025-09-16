@@ -51,6 +51,7 @@ namespace ManosabaLoader
                 }
                 if(!service.PlayedScript.Equals(script.Object)) 
                 {
+                    ModDebugToolsLogDebug(string.Format("Release script:{0}", script.Path));
                     UnityEngine.Object.Destroy(script.Object);
                 }
             }
