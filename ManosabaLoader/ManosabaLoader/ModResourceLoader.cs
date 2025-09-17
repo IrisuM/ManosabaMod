@@ -62,7 +62,7 @@ namespace manosaba_mod
                 AddModLoader(item.Key);
                 foreach(var character in item.Value.Description.Characters)
                 {
-                    AddCharacterModLoader(item.Key, character.AuthorId);
+                    AddCharacterModLoader(item.Key, character.ActorId);
                 }
             }
         }
