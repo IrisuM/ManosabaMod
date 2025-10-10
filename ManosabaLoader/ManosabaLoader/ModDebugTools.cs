@@ -73,7 +73,7 @@ namespace ManosabaLoader
         }
         static void WriteTex2D_jpg(RenderTexture render, string path)
         {
-            Texture2D out_texture = new Texture2D(render.width, render.height, TextureFormat.RGB24, false);
+            out_texture.Resize(render.width, render.height);
             RenderTexture previous = RenderTexture.active;
             RenderTexture.active = render;
             out_texture.ReadPixels(new Rect(0, 0, render.width, render.height), 0, 0);
@@ -84,9 +84,70 @@ namespace ManosabaLoader
             File.WriteAllBytes(path, bytes);
             UnityEngine.Object.Destroy(out_texture);
         }
+        public static Texture2D ResizeTextureProportionally(this Texture2D sourceTexture, int newWidth, int newHeight)
+        {
+            // 1. 创建目标 RenderTexture 和新的 Texture2D
+            RenderTexture targetRT = RenderTexture.GetTemporary(newWidth, newHeight, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+
+            // 创建一个临时的 Material，使用内置的 Sprites/Default Shader
+            Material blitMaterial = new Material(Shader.Find("Sprites/Default"));
+
+            // 2. 计算 UV 坐标（用于 Blit 的 Material）
+
+            float sourceRatio = (float)sourceTexture.width / sourceTexture.height;
+            float targetRatio = (float)newWidth / newHeight;
+
+            Vector2 scale = Vector2.one;
+            Vector2 offset = Vector2.zero;
+
+            if (sourceRatio > targetRatio)
+            {
+                // 原始纹理更宽：左右留黑边（Letterbox），上下铺满
+                float scaleFactor = targetRatio / sourceRatio; // < 1.0
+                scale = new Vector2(scaleFactor, 1.0f);
+                offset = new Vector2((1.0f - scaleFactor) * 0.5f, 0.0f);
+            }
+            else
+            {
+                // 原始纹理更高：上下留黑边（Pillarbox），左右铺满
+                float scaleFactor = sourceRatio / targetRatio; // < 1.0
+                scale = new Vector2(1.0f, scaleFactor);
+                offset = new Vector2(0.0f, (1.0f - scaleFactor) * 0.5f);
+            }
+
+            // 将计算出的缩放和偏移量传递给 Material
+            // 这些属性在 Unity 的内部 Shader 中是通用的
+            blitMaterial.mainTextureScale = scale;
+            blitMaterial.mainTextureOffset = offset;
+
+            // 3. 将旧纹理内容绘制到 RenderTexture 上 (Blit 操作)
+            // Blit 会自动设置目标 RenderTexture，使用 Material 绘制全屏 Quad
+            GL.Clear(true, true, Color.clear);
+            Graphics.Blit(sourceTexture, targetRT, blitMaterial);
+
+            // 4. 从 RenderTexture 读取数据到新的 Texture2D
+            var tmp = RenderTexture.active;
+            RenderTexture.active = targetRT;
+
+            sourceTexture.Resize(newWidth, newHeight);
+            sourceTexture.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
+            sourceTexture.Apply();
+
+            // 清理资源
+            RenderTexture.active = tmp;
+            RenderTexture.ReleaseTemporary(targetRT);
+            UnityEngine.Object.DestroyImmediate(blitMaterial); // 清理临时 Material
+
+            return sourceTexture;
+        }
+
         //莫名奇妙的内存泄漏，不知道是Bepinex的bug还是Unity的bug，总之就是内存泄漏
         static Texture2D out_texture = new Texture2D(16, 16, TextureFormat.RGBA32, false);
         static void WriteTex2D(RenderTexture render, string path)
+        {
+            WriteTex2D(render, path, render.width, render.height);
+        }
+        static void WriteTex2D(RenderTexture render, string path, int newWidth, int newHeight)
         {
             out_texture.Resize(render.width, render.height);
             RenderTexture previous = RenderTexture.active;
@@ -94,10 +155,12 @@ namespace ManosabaLoader
             out_texture.ReadPixels(new Rect(0, 0, render.width, render.height), 0, 0);
             out_texture.Apply();
             RenderTexture.active = previous;
-            WriteTex2D(out_texture, path);
+            WriteTex2D(out_texture, path, newWidth, newHeight);
         }
-        static void WriteTex2D(Texture2D texture, string path)
+        static void WriteTex2D(Texture2D texture, string path, int newWidth, int newHeight)
         {
+            texture.ResizeTextureProportionally(newWidth, newHeight);
+
             BlittableArrayWrapper blittableArrayWrapper;
             Il2CppStructArray<byte> il2CppStructArray = new Il2CppStructArray<byte>(0);
             ImageConversion.EncodeToPNG_Injected(UnityEngine.Object.MarshalledUnityObject.Marshal(texture), out blittableArrayWrapper);
@@ -213,48 +276,59 @@ namespace ManosabaLoader
                 var character = character_pair.Value;
 
                 string file_list = "";
-                if (Il2CppType.TypeFromPointer(character.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCharacterExtended))))
+                if (!Il2CppType.TypeFromPointer(character.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCharacterExtended))))
                 {
-                    LayeredCharacter layeredCharacter = character.Cast<LayeredCharacter>();
-                    // 遍历图层
-                    foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                    continue;
+                }
+                LayeredCharacter layeredCharacter = character.Cast<LayeredCharacter>();
+                // 遍历图层
+                foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                {
+                    if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
                     {
-                        if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
-                        {
-                            continue;
-                        }
-                        layer.Enabled = false;
+                        continue;
                     }
-                    foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                    layer.Enabled = false;
+                }
+                foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                {
+                    if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
                     {
-                        if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
-                        {
-                            continue;
-                        }
-                        LayeredCameraLayer layeredCameraLayer = layer.Cast<LayeredCameraLayer>();
-                        SpriteRenderer render;
-                        if (!layeredCameraLayer.go.TryGetComponent<SpriteRenderer>(out render))
-                        {
-                            continue;
-                        }
-                        if (layeredCameraLayer.Name == "")
-                        {
-                            continue;
-                        }
-                        file_list += layeredCameraLayer.Group + ":" + layeredCameraLayer.Name + ":";
-                        file_list += render.sortingOrder;
-                        file_list += "\n";
+                        continue;
+                    }
+                    LayeredCameraLayer layeredCameraLayer = layer.Cast<LayeredCameraLayer>();
+                    SpriteRenderer render;
+                    if (!layeredCameraLayer.go.TryGetComponent<SpriteRenderer>(out render))
+                    {
+                        continue;
+                    }
+                    if (layeredCameraLayer.Name == "")
+                    {
+                        continue;
+                    }
+                    file_list += layeredCameraLayer.Group + ":" + layeredCameraLayer.Name + ":";
+                    file_list += render.sortingOrder;
+                    file_list += "\n";
 
-                        layer.Enabled = true;
-                        var renderTexture = layeredCharacter.Behaviour.Render(layeredCharacter.ActorMeta.PixelsPerUnit);
-                        WriteTex2D(renderTexture, Path.Combine(".", "dump_character_layer", character_pair.Key, layeredCameraLayer.Group, layeredCameraLayer.Name + ".png"));
-                        RenderTexture.ReleaseTemporary(renderTexture);
-                        layer.Enabled = false;
-                    }
+                    layer.Enabled = true;
+                    var renderTexture = layeredCharacter.Behaviour.Render(layeredCharacter.ActorMeta.PixelsPerUnit);
+                    WriteTex2D(renderTexture, Path.Combine(".", "dump_character_layer", character_pair.Key, layeredCameraLayer.Group, layeredCameraLayer.Name + ".png"), renderTexture.width / 4, renderTexture.height / 4);
+                    RenderTexture.ReleaseTemporary(renderTexture);
+                    layer.Enabled = false;
                 }
                 string info_path = Path.Combine(".", "dump_character_layer", character_pair.Key, "info.txt");
                 Directory.CreateDirectory(Path.GetDirectoryName(info_path));
                 File.WriteAllText(info_path, file_list);
+
+                // 遍历预设姿势
+                string composition_path = Path.Combine(".", "dump_character_layer", character_pair.Key, "composition.txt");
+                string composition_list = "";
+                foreach (var pose in layeredCharacter.Behaviour.compositionMap)
+                {
+                    composition_list += pose.Key + ":" + pose.Composition + "\n";
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(composition_path));
+                File.WriteAllText(composition_path, composition_list);
             }
         }
 
