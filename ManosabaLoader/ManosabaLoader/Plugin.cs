@@ -199,6 +199,10 @@ namespace ManosabaLoader
             ModDebugTools.DumpCharacter();
         }
 
+        void DumpCharacterLayer()
+        {
+            ModDebugTools.DumpCharacterLayer();
+        }
         void OpenServer()
         {
             ModBridgeTools.RestartServer();   

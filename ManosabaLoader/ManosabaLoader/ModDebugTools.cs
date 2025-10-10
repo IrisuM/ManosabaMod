@@ -3,6 +3,7 @@ using GigaCreation.NaninovelExtender.Common;
 using GigaCreation.NaninovelExtender.ExtendedActors;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using manosaba_mod;
 using Naninovel;
 using StableNameDotNet;
@@ -11,9 +12,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.Bindings;
 using WitchTrials.Models;
 using WitchTrials.Views;
 
@@ -43,13 +46,13 @@ namespace ManosabaLoader
         public static void ReleaseAllScript()
         {
             var service = Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();
-            foreach(var script in service.scripts.ScriptLoader.GetAllLoaded().Cast<Il2CppSystem.Collections.Generic.List<Resource<Script>>>())
+            foreach (var script in service.scripts.ScriptLoader.GetAllLoaded().Cast<Il2CppSystem.Collections.Generic.List<Resource<Script>>>())
             {
                 if (script.Path.Contains(ModResourceLoader.modScriptPrefix))
                 {
                     continue;
                 }
-                if(!service.PlayedScript.Equals(script.Object)) 
+                if (!service.PlayedScript.Equals(script.Object))
                 {
                     ModDebugToolsLogDebug(string.Format("Release script:{0}", script.Path));
                     UnityEngine.Object.Destroy(script.Object);
@@ -68,7 +71,56 @@ namespace ManosabaLoader
             instance.PatchAll(typeof(UnityLogger_Patch));
             instance.PatchAll(typeof(ResourceProvider_Patch));
         }
+        static void WriteTex2D_jpg(RenderTexture render, string path)
+        {
+            Texture2D out_texture = new Texture2D(render.width, render.height, TextureFormat.RGB24, false);
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = render;
+            out_texture.ReadPixels(new Rect(0, 0, render.width, render.height), 0, 0);
+            out_texture.Apply();
+            RenderTexture.active = previous;
+            byte[] bytes = out_texture.EncodeToJPG();
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllBytes(path, bytes);
+            UnityEngine.Object.Destroy(out_texture);
+        }
+        //莫名奇妙的内存泄漏，不知道是Bepinex的bug还是Unity的bug，总之就是内存泄漏
+        static Texture2D out_texture = new Texture2D(16, 16, TextureFormat.RGBA32, false);
+        static void WriteTex2D(RenderTexture render, string path)
+        {
+            out_texture.Resize(render.width, render.height);
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = render;
+            out_texture.ReadPixels(new Rect(0, 0, render.width, render.height), 0, 0);
+            out_texture.Apply();
+            RenderTexture.active = previous;
+            WriteTex2D(out_texture, path);
+        }
+        static void WriteTex2D(Texture2D texture, string path)
+        {
+            BlittableArrayWrapper blittableArrayWrapper;
+            Il2CppStructArray<byte> il2CppStructArray = new Il2CppStructArray<byte>(0);
+            ImageConversion.EncodeToPNG_Injected(UnityEngine.Object.MarshalledUnityObject.Marshal(texture), out blittableArrayWrapper);
 
+            unsafe void Unmarshal(ref BlittableArrayWrapper blittableArrayWrapper, ref Il2CppStructArray<byte> array)
+            {
+                System.IntPtr* ptr = stackalloc System.IntPtr[1];
+                System.IntPtr intPtr = IL2CPP.Il2CppObjectBaseToPtr(array);
+                *ptr = (nint)(&intPtr);
+                Unsafe.SkipInit(out System.IntPtr exc);
+                var Pointer = typeof(BlittableArrayWrapper).GetNestedType("MethodInfoStoreGeneric_Unmarshal_Internal_Void_byref_Il2CppArrayBase_1_T_0`1", BindingFlags.NonPublic).MakeGenericType(typeof(byte)).GetField("Pointer", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                System.IntPtr intPtr2 = IL2CPP.il2cpp_runtime_invoke((System.IntPtr)Pointer, (nint)Unsafe.AsPointer(ref blittableArrayWrapper), (void**)ptr, ref exc);
+                Il2CppException.RaiseExceptionIfNecessary(exc);
+                System.IntPtr intPtr3 = intPtr;
+                array = ((intPtr3 == (System.IntPtr)0) ? null : Il2CppInterop.Runtime.Runtime.Il2CppObjectPool.Get<Il2CppStructArray<byte>>(intPtr3));
+            }
+
+            Unmarshal(ref blittableArrayWrapper, ref il2CppStructArray);
+            byte[] bytes = il2CppStructArray;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllBytes(path, bytes);
+        }
         public static void DumpCharacter()
         {
             int BKDRHash(string str)
@@ -82,16 +134,6 @@ namespace ManosabaLoader
                 }
 
                 return (hash & 0x7FFFFFFF);
-            }
-            void WriteTex2D(RenderTexture render, string path)
-            {
-                Texture2D out_texture = new Texture2D(render.width, render.height, TextureFormat.RGB24, false);
-                RenderTexture.active = render;
-                out_texture.ReadPixels(new Rect(0, 0, render.width, render.height), 0, 0);
-                out_texture.Apply();
-                byte[] bytes = out_texture.EncodeToJPG();
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllBytes(path, bytes);
             }
             Dictionary<string, string> MergeCompositions(Dictionary<string, string> compositions)
             {
@@ -125,7 +167,7 @@ namespace ManosabaLoader
             }
             ModDebugToolsLogMessage("DumpCharacter");
             var characterManager = Engine.GetServiceOrErr<CharacterManager>();
-            foreach(var character_pair in characterManager.ManagedActors)
+            foreach (var character_pair in characterManager.ManagedActors)
             {
                 ModDebugToolsLogMessage(character_pair.Key);
                 var character = character_pair.Value;
@@ -152,56 +194,111 @@ namespace ManosabaLoader
                         layeredCharacter.SetAppearance(pos_name);
                         string file_tag = Path.Combine(pos_name + "(" + pos.Replace("/", "##").Replace(">", "@@") + ")");
                         int file_tag_hash = BKDRHash(file_tag);
-                        string path = Path.Combine(".", "dump_character", character_pair.Key, file_tag_hash.ToString() + ".jpg");
+                        string path = Path.Combine(".", "dump_character", character_pair.Key, file_tag_hash.ToString() + ".png");
                         WriteTex2D(layeredCharacter.appearanceTexture, path);
                         file_list = file_list + pos_name + ":" + pos + ":" + file_tag_hash + "\n";
                     }
                 }
-                File.WriteAllText(Path.Combine(".", "dump_character", character_pair.Key, "info.txt"), file_list);
+                string info_path = Path.Combine(".", "dump_character", character_pair.Key, "info.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(info_path));
+                File.WriteAllText(info_path, file_list);
             }
         }
-    }
+        public static void DumpCharacterLayer()
+        {            ModDebugToolsLogMessage("DumpCharacterLayer");
+            var characterManager = Engine.GetServiceOrErr<CharacterManager>();
+            foreach (var character_pair in characterManager.ManagedActors)
+            {
+                ModDebugToolsLogMessage(character_pair.Key);
+                var character = character_pair.Value;
 
-    [HarmonyPatch]
-    class UnityLogger_Patch
-    {
-        [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Log))]
-        [HarmonyPrefix]
-        static bool UnityLogger_Log_Patch(string message)
-        {
-            ModDebugTools.ModDebugToolsLogMessage(message);
-            return false;
+                string file_list = "";
+                if (Il2CppType.TypeFromPointer(character.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCharacterExtended))))
+                {
+                    LayeredCharacter layeredCharacter = character.Cast<LayeredCharacter>();
+                    // 遍历图层
+                    foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                    {
+                        if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
+                        {
+                            continue;
+                        }
+                        layer.Enabled = false;
+                    }
+                    foreach (var layer in layeredCharacter.Behaviour.Drawer.layers)
+                    {
+                        if (!Il2CppType.TypeFromPointer(layer.ObjectClass).IsEquivalentTo(Il2CppType.From(typeof(LayeredCameraLayer))))
+                        {
+                            continue;
+                        }
+                        LayeredCameraLayer layeredCameraLayer = layer.Cast<LayeredCameraLayer>();
+                        SpriteRenderer render;
+                        if (!layeredCameraLayer.go.TryGetComponent<SpriteRenderer>(out render))
+                        {
+                            continue;
+                        }
+                        if (layeredCameraLayer.Name == "")
+                        {
+                            continue;
+                        }
+                        file_list += layeredCameraLayer.Group + ":" + layeredCameraLayer.Name + ":";
+                        file_list += render.sortingOrder;
+                        file_list += "\n";
+
+                        layer.Enabled = true;
+                        var renderTexture = layeredCharacter.Behaviour.Render(layeredCharacter.ActorMeta.PixelsPerUnit);
+                        WriteTex2D(renderTexture, Path.Combine(".", "dump_character_layer", character_pair.Key, layeredCameraLayer.Group, layeredCameraLayer.Name + ".png"));
+                        RenderTexture.ReleaseTemporary(renderTexture);
+                        layer.Enabled = false;
+                    }
+                }
+                string info_path = Path.Combine(".", "dump_character_layer", character_pair.Key, "info.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(info_path));
+                File.WriteAllText(info_path, file_list);
+            }
         }
 
-        [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Warn))]
-        [HarmonyPrefix]
-        static bool UnityLogger_Warn_Patch(string message)
+        [HarmonyPatch]
+        class UnityLogger_Patch
         {
-            ModDebugTools.ModDebugToolsLogWarning(message);
-            return false;
+            [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Log))]
+            [HarmonyPrefix]
+            static bool UnityLogger_Log_Patch(string message)
+            {
+                ModDebugTools.ModDebugToolsLogMessage(message);
+                return false;
+            }
+
+            [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Warn))]
+            [HarmonyPrefix]
+            static bool UnityLogger_Warn_Patch(string message)
+            {
+                ModDebugTools.ModDebugToolsLogWarning(message);
+                return false;
+            }
+
+            [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Err))]
+            [HarmonyPrefix]
+            static bool UnityLogger_Err_Patch(string message)
+            {
+                ModDebugTools.ModDebugToolsLogError(message);
+                return false;
+            }
         }
 
-        [HarmonyPatch(typeof(UnityLogger), nameof(UnityLogger.Err))]
-        [HarmonyPrefix]
-        static bool UnityLogger_Err_Patch(string message)
+        // 打印资源调用信息
+        [HarmonyPatch]
+        class ResourceProvider_Patch
         {
-            ModDebugTools.ModDebugToolsLogError(message);
-            return false;
-        }
-    }
-
-    // 打印资源调用信息
-    [HarmonyPatch]
-    class ResourceProvider_Patch
-    {
-        [HarmonyTargetMethod]
-        static MethodBase TargetMethod()
-        {
-            return typeof(ResourceProvider).GetMethod("ResourceLoaded", 0, new Type[] { typeof(string) });
-        }
-        public static void Postfix(string path)
-        {
-            ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded: {0}", path));
+            [HarmonyTargetMethod]
+            static MethodBase TargetMethod()
+            {
+                return typeof(ResourceProvider).GetMethod("ResourceLoaded", 0, new Type[] { typeof(string) });
+            }
+            public static void Postfix(string path)
+            {
+                ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded: {0}", path));
+            }
         }
     }
 }
