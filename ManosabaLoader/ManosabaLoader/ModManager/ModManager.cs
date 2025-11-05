@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace ManosabaLoader.ModManager
 {
@@ -14,7 +11,7 @@ namespace ManosabaLoader.ModManager
         public static Action<string> ModManagerLogWarning;
         public static Action<string> ModManagerLogError;
 
-        const string CONFIG_NAME = "info.json";
+        public const string CONFIG_NAME = "info.json";
 
         static Dictionary<string, ModItem> items = new Dictionary<string, ModItem>();
         public static IReadOnlyDictionary<string, ModItem> Items => items;
@@ -30,7 +27,7 @@ namespace ManosabaLoader.ModManager
                     ModItem item = new ModItem(path, File.ReadAllText(config_path));
                     if (item.Valid)
                     {
-                        items[path] = item;
+                        items[Path.GetFileName(path)] = item;
                     }
                 }
             }

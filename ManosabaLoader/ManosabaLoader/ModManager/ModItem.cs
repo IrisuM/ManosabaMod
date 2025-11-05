@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace ManosabaLoader.ModManager
 {
@@ -29,9 +28,25 @@ namespace ManosabaLoader.ModManager
         }
 
         bool valid = false;
-        public bool Valid => valid;
         ModDescription description = null;
-        public ModDescription Description => description;
+
+        public bool Valid
+        {
+            get => valid;
+            internal set => valid = value;
+        }
+
+        public ModDescription Description
+        {
+            get => description;
+            internal set => description = value;
+        }
+
+        internal ModItem()
+        {
+            
+        }
+        
         public ModItem(string path,string config) 
         {
             try

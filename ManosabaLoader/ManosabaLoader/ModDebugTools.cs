@@ -4,7 +4,7 @@ using GigaCreation.NaninovelExtender.ExtendedActors;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using manosaba_mod;
+
 using Naninovel;
 using StableNameDotNet;
 using System;
@@ -376,9 +376,15 @@ namespace ManosabaLoader
             {
                 return typeof(ResourceProvider).GetMethod("ResourceLoaded", 0, new Type[] { typeof(string) });
             }
-            public static void Postfix(string path)
+            public static void Postfix(string path, ResourceProvider __instance)
             {
                 ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded: {0}", path));
+                var local = __instance.TryCast<LocalResourceProvider>();
+                if (local != null)
+                {
+                    string fullPath = local.RootPath;
+                    ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded FullPath: {0}", fullPath));
+                }
             }
         }
     }

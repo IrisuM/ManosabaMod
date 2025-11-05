@@ -1,22 +1,28 @@
-﻿using HarmonyLib;
+﻿using System;
+using System.IO;
+
+using GigaCreation.NaninovelExtender.Audio;
 using GigaCreation.NaninovelExtender.Common;
+using GigaCreation.NaninovelExtender.ExtendedActors;
+
+using HarmonyLib;
+
 using Il2CppInterop.Runtime;
+
+using ManosabaLoader.ModManager;
+
 using Naninovel;
+
+using UnityEngine;
+
 using WitchTrials.Models;
 using WitchTrials.Views;
-using System;
-using UnityEngine;
-using GigaCreation.NaninovelExtender.Audio;
-using GigaCreation.NaninovelExtender.ExtendedActors;
-using ManosabaLoader;
-using System.IO;
-using ManosabaLoader.ModManager;
-using System.Text;
 
-namespace manosaba_mod
+namespace ManosabaLoader
 {
     public static class ModResourceLoader
     {
+        
         public static Action<string> ScriptLoaderLogMessage;
         public static Action<string> ScriptLoaderLogDebug;
         public static Action<string> ScriptLoaderLogWarning;
@@ -31,11 +37,8 @@ namespace manosaba_mod
 
         public static NamedString ModScriptEnter => new NamedString(modScriptEnter, modScriptEnterLabel);
 
-        const string rootPath = "%DATA%/..";
-
-        public static void Init(string enter, string label, bool directMode)
+        public static void Init(Harmony instance, string enter, string label, bool directMode)
         {
-            var instance = new Harmony(MyPluginInfo.PLUGIN_NAME);
             instance.PatchAll(typeof(TitleUi_Patch));
 
             if (directMode)
@@ -57,13 +60,21 @@ namespace manosaba_mod
             modProvisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(modScriptPrefix, "Scripts").Replace("\\", "/"));
             modTextProvisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(modScriptPrefix, "Text").Replace("\\", "/"));
 
-            foreach (var item in ModManager.Items)
+            var rootPath = Plugin.Instance.ModRootPath;
+            foreach (var item in ModManager.ModManager.Items)
             {
-                AddModLoader(item.Key);
+                AddModLoader(rootPath, item.Key, "Scripts");
                 foreach(var character in item.Value.Description.Characters)
                 {
                     AddCharacterModLoader(item.Key, character);
                 }
+            }
+            
+            if (ScriptWorkingManager.IsEnabled)
+            {
+                var root = Path.GetDirectoryName(ScriptWorkingManager.WorkspacePath);
+                var prefix = Path.GetFileName(ScriptWorkingManager.WorkspacePath);
+                AddModLoader(ScriptWorkingManager.WorkspacePath, "", "Scripts");
             }
         }
         public static void AddModStartMenu()
@@ -109,7 +120,25 @@ namespace manosaba_mod
             choice_list += "    @goto .GoToModScript" + "\n";
             choice_index++;
 
-            foreach (var item in ModManager.Items)
+            if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo != null)
+            {
+                //脚本工作坊模式
+                var modItem = ScriptWorkingManager.ModInfo;
+                choice_list += 
+$"""
+@choice "工作区：{modItem.Description.Name}" Lock:false play:true show:true
+    @set "modName=\"{modItem.Description.Name}\""
+    @set "modDescription=\"{modItem.Description.Description}\""
+    @set "modAuthor=\"{modItem.Description.Author}\""
+    @set "modVersion=\"{modItem.Description.Version}\""
+    @set "nextScenario=\"{modItem.Description.Enter}\""
+    @goto .GoToModScript
+
+""";
+                choice_index++;
+            }
+
+            foreach (var item in ModManager.ModManager.Items)
             {
                 //超出单页上限，分页
                 if(choice_index>= perChoiceCount)
@@ -209,19 +238,20 @@ namespace manosaba_mod
                 }
             }
         }
+        
         //添加 Mod加载器
-        public static void AddModLoader(string prefix)
+        public static void AddModLoader(string root, string prefix, string scenarioDirName)
         {
 
             {
                 //默认资源加载器
                 var service = Engine.GetServiceOrErr<ResourceProviderManager>();
-                var localResourceProvider = new LocalResourceProvider(rootPath);
+                var localResourceProvider = new LocalResourceProvider(root);
                 localResourceProvider.AddConverter(new NaniToScriptAssetConverter().Cast<IRawConverter<Script>>());
                 localResourceProvider.AddConverter(new TxtToTextAssetConverter().Cast<IRawConverter<TextAsset>>());
                 localResourceProvider.AddConverter(new WavToAudioClipConverter().Cast<IRawConverter<AudioClip>>());
                 localResourceProvider.AddConverter(new JpgOrPngToTextureConverter().Cast<IRawConverter<Texture2D>>());
-                service.providersMap.Add(prefix.Replace("\\", "/"), localResourceProvider.Cast<IResourceProvider>());
+                service.providersMap.Add(Path.Combine(root, prefix).Replace("\\", "/"), localResourceProvider.Cast<IResourceProvider>());
                 ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, prefix)));
             }
 
@@ -229,9 +259,9 @@ namespace manosaba_mod
                 //剧本加载器
                 var service = Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();
                 var ProvisionSources = service.scripts.ScriptLoader.Cast<ResourceLoader<Script>>().ProvisionSources;
-                var localResourceProvider = new LocalResourceProvider(rootPath);
+                var localResourceProvider = new LocalResourceProvider(root);
                 localResourceProvider.AddConverter(new NaniToScriptAssetConverter().Cast<IRawConverter<Script>>());
-                var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Scripts").Replace("\\", "/"));
+                var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, scenarioDirName).Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
                 ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, provisionSource.PathPrefix)));
             }
@@ -240,7 +270,7 @@ namespace manosaba_mod
                 //本地化加载器
                 var service = Engine.GetServiceOrErr<TextManager>();
                 var ProvisionSources = service.textLoader.Cast<ResourceLoader<TextAsset>>().ProvisionSources;
-                var localResourceProvider = new LocalResourceProvider(rootPath);
+                var localResourceProvider = new LocalResourceProvider(root);
                 localResourceProvider.AddConverter(new TxtToTextAssetConverter().Cast<IRawConverter<TextAsset>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Text").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
@@ -251,7 +281,7 @@ namespace manosaba_mod
                 //音频加载器
                 var service = Engine.GetServiceOrErr<AudioManagerExtended>();
                 var ProvisionSources = service.audioLoader.Cast<ResourceLoader<AudioClip>>().ProvisionSources;
-                var localResourceProvider = new LocalResourceProvider(rootPath);
+                var localResourceProvider = new LocalResourceProvider(root);
                 localResourceProvider.AddConverter(new WavToAudioClipConverter().Cast<IRawConverter<AudioClip>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Audio").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
@@ -262,7 +292,7 @@ namespace manosaba_mod
                 //角色声音加载器
                 var service = Engine.GetServiceOrErr<AudioManagerExtended>();
                 var ProvisionSources = service.voiceLoader.Cast<ResourceLoader<AudioClip>>().ProvisionSources;
-                var localResourceProvider = new LocalResourceProvider(rootPath);
+                var localResourceProvider = new LocalResourceProvider(root);
                 localResourceProvider.AddConverter(new WavToAudioClipConverter().Cast<IRawConverter<AudioClip>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Voice").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
@@ -277,7 +307,7 @@ namespace manosaba_mod
                 {
                     var MainBackground = service.GetAppearanceLoader(backId);
                     var ProvisionSources = MainBackground.Cast<ResourceLoader<Texture2D>>().ProvisionSources;
-                    var localResourceProvider = new LocalResourceProvider(rootPath);
+                    var localResourceProvider = new LocalResourceProvider(root);
                     localResourceProvider.AddConverter(new JpgOrPngToTextureConverter().Cast<IRawConverter<Texture2D>>());
                     var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Backgrounds", backId).Replace("\\", "/"));
                     ProvisionSources.System_Collections_IList_Insert(0, provisionSource);

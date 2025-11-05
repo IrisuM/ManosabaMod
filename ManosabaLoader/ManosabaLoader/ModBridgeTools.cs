@@ -1,19 +1,21 @@
-﻿using GigaCreation.Essentials.SaveLoad;
-using Il2CppInterop.Runtime.Injection;
+﻿using Il2CppInterop.Runtime.Injection;
 using Naninovel;
 using Naninovel.Bridging;
 using Naninovel.UI;
 using Newtonsoft.Json.Serialization;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
-using UnityEngine.InputSystem.Utilities;
+
+using BepInEx.Logging;
+
+using ManosabaLoader.Utils;
+
+using Naninovel.Metadata;
+
 using WitchTrials.Views;
+
+using Command = Naninovel.Command;
+using Logger = BepInEx.Logging.Logger;
 
 namespace ManosabaLoader
 {
@@ -38,14 +40,16 @@ namespace ManosabaLoader
         public string Serialize(Il2CppSystem.Object poco, Il2CppSystem.Type type) => Newtonsoft.Json.JsonConvert.SerializeObject(poco, type, Newtonsoft.Json.Formatting.None, settings);
         public Il2CppSystem.Object Deserialize(string serialized, Il2CppSystem.Type type) => Newtonsoft.Json.JsonConvert.DeserializeObject(serialized, type, settings);
     }
+    
     public static class ModBridgeTools
     {
+        private static ManualLogSource logger = Logger.CreateLogSource($"{MyPluginInfo.PLUGIN_NAME}.{typeof(ModBridgeTools)}");
+        private static string beaconFile;
         private static string bridgingDir;
         private static string metadataFile;
+        private static string scenarioDir;
         private static Server server;
         private static IOFiles files;
-        private static string scriptPath = "Act01_Chapter01/Act01_Chapter01_Adv01";
-        private static int lineIdx = 0;
         private static Il2CppSystem.Action<Command> NotifyPlayedCommand_Action = new Action<Command>(command =>
         {
             NotifyPlayedCommand(command);
@@ -58,33 +62,55 @@ namespace ManosabaLoader
         {
             NotifyPlaybackStopped();
         });
-        /*private static Il2CppSystem.Action<Naninovel.Bridging.PlaybackSpot> HandleGotoRequest_Action = new Action<Naninovel.Bridging.PlaybackSpot>((spot) =>
+
+        // private static Il2CppSystem.Action<Naninovel.Bridging.PlaybackSpot> HandleGotoRequest_Action = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<Naninovel.Bridging.PlaybackSpot>>(HandleGotoRequest);
+        private static Il2CppSystem.Action<Naninovel.Bridging.PlaybackSpot> HandleGotoRequest_Action =
+            Il2CppEx.ConvertDelegateDangerous<Il2CppSystem.Action<Naninovel.Bridging.PlaybackSpot>>(HandleGotoRequest);
+        private static Il2CppSystem.Action OnEngineInit_Action;
+
+        public static string MetadataFile
         {
-            HandleGotoRequest(spot);
-        });*/
-        private static Il2CppSystem.Action OnEngineInit_Action = new Action(() =>
-        {
-            OnEngineInit();
-        });
+            get => metadataFile;
+            set => metadataFile = value;
+        }
 
         public static void RestartServer()
         {
-            Console.WriteLine("RestartServer");
+            logger.LogInfo("RestartServer");
             ResolvePaths();
             StopServer();
-            Console.WriteLine("StopServer");
-            // UpdateMetadata
+            logger.LogInfo("StopServer");
+            UpdateMeta();
             StartServer();
-            Console.WriteLine("StartServer");
+            logger.LogInfo("StartServer");
+            
         }
 
         private static void ResolvePaths()
         {
-            var cfg = Configuration.GetOrDefault<EngineConfiguration>();
-            var root = "E:/SteamLibrary/steamapps/common/manosaba_game/ManosabaMod";
-            bridgingDir = $"{root}/.nani/Bridging";
-            metadataFile = $"{root}/.nani/Metadata.json";
+            var root = ScriptWorkingManager.WorkspacePath;
+            logger.LogInfo($"Scripting root path: {root}");
+            var dataDir = Path.Combine(root, "NaninovelData");
+            var transientDir = Path.Combine(dataDir, ".nani", "Transient");
+            scenarioDir = Path.Combine(root, "Scripts");
+            bridgingDir = Path.Combine(transientDir, "Bridging");
+            metadataFile = Path.Combine(transientDir, "Metadata.json");
+            beaconFile = Path.Combine(dataDir, ".naninovel.unity.data");
             if (!Directory.Exists(bridgingDir)) Directory.CreateDirectory(bridgingDir);
+            if (!Directory.Exists(scenarioDir)) Directory.CreateDirectory(scenarioDir);
+        }
+        
+        private static Project UpdateMeta()
+        {
+            var project = ModMetadataGenerator.GenerateProjectMetadata();
+            var serializer = new ModJsonSerializer();
+            var json = serializer.Serialize(project);
+            var metadataDir = Path.GetDirectoryName(MetadataFile);
+            if (metadataDir != null && !Directory.Exists(metadataDir))
+                Directory.CreateDirectory(metadataDir);
+            File.WriteAllText(MetadataFile, json);
+            Plugin.LogIns.LogInfo("Dumped mod metadata to " + MetadataFile);
+            return project;
         }
 
         private static void StartServer()
@@ -97,16 +123,19 @@ namespace ManosabaLoader
                 Name = $"SherryAppleJuice",
                 Version = EngineVersion.LoadFromResources().BuildVersionTag()
             });
-            //server.OnGotoRequested += HandleGotoRequest_Action;
+            server.OnGotoRequested += HandleGotoRequest_Action;
             Engine.OnInitializationFinished += AttachServiceListeners_Action;
             Engine.OnDestroyed += NotifyPlaybackStopped_Action;
+
+            if (!File.Exists(beaconFile))
+                File.Create(beaconFile).Dispose();
         }
 
         private static void StopServer()
         {
             Engine.OnInitializationFinished -= AttachServiceListeners_Action;
             Engine.OnDestroyed -= NotifyPlaybackStopped_Action;
-            //if (server != null) server.OnGotoRequested -= HandleGotoRequest_Action;
+            if (server != null) server.OnGotoRequested -= HandleGotoRequest_Action;
             server = null;
             files?.Dispose();
         }
@@ -135,25 +164,29 @@ namespace ManosabaLoader
             server?.NotifyPlaybackStatusChanged(new() { Playing = false });
         }
 
-        private static void HandleGotoRequest(Naninovel.Bridging.PlaybackSpot spot)
+        private static void HandleGotoRequest(PlaybackSpotIl2CppStruct nativeSpot)
         {
-            scriptPath = spot.ScriptPath;
-            lineIdx = spot.LineIndex;
-
+            var spot = (PlaybackSpotStruct)nativeSpot;
+            logger.LogInfo($"HandleGotoRequest: {spot.scriptPath}, {spot.lineIndex}, {spot.inlineIndex}");
+            
+            OnEngineInit_Action ??= (Il2CppSystem.Action)OnEngineInit;
+            
             if (Engine.Initialized) OnEngineInit();
             else Engine.OnInitializationFinished += OnEngineInit_Action;
-        }
-        private static void OnEngineInit()
-        {
-            Engine.OnInitializationFinished -= OnEngineInit_Action;
-            var player = Engine.GetServiceOrErr<IScriptPlayer>();
-            if (player.PlayedScript && player.PlayedScript.Path == scriptPath)
-                player.Rewind(lineIdx).Forget();
-            else
-                Engine.GetServiceOrErr<IStateManager>().ResetState()
-                    .ContinueWith(new Action(() => player.LoadAndPlay(scriptPath)))
-                    .ContinueWith(new Action(() => Engine.GetServiceOrErr<IUIManager>().GetUI<ITitleUI>()?.Cast<TitleUi>().Hide()))
-                    .ContinueWith(new Action(() => player.Rewind(lineIdx))).Forget();
+            return;
+            
+            void OnEngineInit()
+            {
+                Engine.OnInitializationFinished -= OnEngineInit_Action;
+                var player = Engine.GetServiceOrErr<IScriptPlayer>();
+                if (player.PlayedScript && player.PlayedScript.Path == spot.scriptPath)
+                    player.Rewind(spot.lineIndex).Forget();
+                else
+                    Engine.GetServiceOrErr<IStateManager>().ResetState()
+                        .ContinueWith(new Action(() => player.LoadAndPlay(spot.scriptPath)))
+                        .ContinueWith(new Action(() => Engine.GetServiceOrErr<IUIManager>().GetUI<ITitleUI>()?.Cast<TitleUi>().Hide()))
+                        .ContinueWith(new Action(() => player.Rewind(spot.lineIndex))).Forget();
+            }
         }
     }
 }
