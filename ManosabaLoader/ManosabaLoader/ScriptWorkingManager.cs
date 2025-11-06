@@ -4,7 +4,11 @@ using System.Text.Json;
 
 using BepInEx.Logging;
 
+using ManosabaLoader.BridgingProtocolAdapt;
 using ManosabaLoader.ModManager;
+using ManosabaLoader.Utils;
+
+using Naninovel;
 
 using UnityEngine;
 
@@ -15,6 +19,7 @@ namespace ManosabaLoader;
 public static class ScriptWorkingManager
 {
     private static ManualLogSource logger;
+    private static BridgingService bridgingService;
     private static string configJsonPath;
     private static string workspacePath;
     
@@ -28,11 +33,10 @@ public static class ScriptWorkingManager
     public static void Init()
     {
         logger = Logger.CreateLogSource($"{MyPluginInfo.PLUGIN_NAME}.{typeof(ScriptWorkingManager)}");
-        ModBridgeTools.RestartServer();
         
         if (!Directory.Exists(WorkspacePath))
             Directory.CreateDirectory(WorkspacePath);
-
+        
         if (!File.Exists(ConfigJsonPath))
         {
             logger.LogWarning($"Config file not found at {ConfigJsonPath}, creating default config at {ConfigJsonPath}.");
@@ -44,7 +48,11 @@ public static class ScriptWorkingManager
 
         ModInfo = new ModItem(ConfigJsonPath, File.ReadAllText(ConfigJsonPath));
         logger.LogInfo($"Loaded mod config from {ConfigJsonPath}. Mod name: {ModInfo.Description.Name}, Entry: {ModInfo.Description.Enter}");
-
+        
+        bridgingService = new BridgingService(WorkspacePath, ModJsonSerializer.Shared.Cast<ISerializer>());
+        
+        bridgingService.SetupWorkingDirectory();
+        bridgingService.RestartServer();
         IsEnabled = true;
     }
 }

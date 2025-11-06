@@ -7,7 +7,7 @@ using Naninovel;
 
 using BridgePlaybackSpot = Naninovel.Bridging.PlaybackSpot;
 
-namespace ManosabaLoader;
+namespace ManosabaLoader.Marshaling;
 
 public struct PlaybackSpotStruct
 {
@@ -24,11 +24,23 @@ public struct PlaybackSpotStruct
         };
 }
 
-public struct PlaybackSpotIl2CppStruct
+public unsafe struct PlaybackSpotIl2CppStruct
 {
     public IntPtr scriptPath;
     public int lineIndex;
     public int inlineIndex;
+
+    public PlaybackSpotIl2CppStruct(PlaybackSpot il2cppValueType)
+    {
+        var unbox = IL2CPP.il2cpp_object_unbox(il2cppValueType.Pointer);
+        this = Unsafe.Read<PlaybackSpotIl2CppStruct>((void*)unbox);
+    }
+
+    public PlaybackSpotIl2CppStruct(BridgePlaybackSpot il2cppValueType)
+    {
+        var unbox = IL2CPP.il2cpp_object_unbox(il2cppValueType.Pointer);
+        this = Unsafe.Read<PlaybackSpotIl2CppStruct>((void*)unbox);
+    }
     
     public static implicit operator PlaybackSpotStruct(PlaybackSpotIl2CppStruct il2CppStruct)
         => new()
@@ -38,9 +50,9 @@ public struct PlaybackSpotIl2CppStruct
             inlineIndex = il2CppStruct.inlineIndex
         };
 
-    public static unsafe implicit operator PlaybackSpot(PlaybackSpotIl2CppStruct il2CppStruct)
+    public static implicit operator PlaybackSpot(PlaybackSpotIl2CppStruct il2CppStruct)
         => new(IL2CPP.il2cpp_value_box(Il2CppClassPointerStore<PlaybackSpot>.NativeClassPtr, (IntPtr)Unsafe.AsPointer(ref il2CppStruct)));
     
-    public static unsafe implicit operator BridgePlaybackSpot(PlaybackSpotIl2CppStruct il2CppStruct)
+    public static implicit operator BridgePlaybackSpot(PlaybackSpotIl2CppStruct il2CppStruct)
         => new(IL2CPP.il2cpp_value_box(Il2CppClassPointerStore<BridgePlaybackSpot>.NativeClassPtr, (IntPtr)Unsafe.AsPointer(ref il2CppStruct)));
 }

@@ -19,7 +19,8 @@ namespace ManosabaLoader.Utils;
 
 public static class Il2CppEx
 {
-    private static BindingFlags BFlagsAll = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+    private const BindingFlags BFlagsAll = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+    private static SYS.Lazy<MethodInfo> MethodIl2CppTrampolineHelpersGetFixedSizeStructType = new(() => typeof(IL2CPP).Assembly.GetType("Il2CppInterop.Runtime.Injection.TrampolineHelpers")!.GetMethod("GetFixedSizeStructType", BFlagsAll)!);
     private static SYS.Type TypeIl2CppToMonoDelegateReference = typeof(DelegateSupport).GetNestedType("Il2CppToMonoDelegateReference", BindingFlags.NonPublic);
     private static ConstructorInfo CtorIl2CppToMonoDelegateReference = TypeIl2CppToMonoDelegateReference.GetConstructor(BFlagsAll, null, [typeof(SYS.Delegate), typeof(IntPtr)], null)!;
     private static SYS.Type TypeMethodSignature = typeof(DelegateSupport).GetNestedType("MethodSignature", BindingFlags.NonPublic);
@@ -117,5 +118,10 @@ public static class Il2CppEx
         Il2CppException.RaiseExceptionIfNecessary(exc);
                 
         return new ILS.Nullable<T>(instancePtr);
+    }
+
+    public static SYS.Type GetFixedSizeStructType(int size)
+    {
+        return (SYS.Type)MethodIl2CppTrampolineHelpersGetFixedSizeStructType.Value.Invoke(null, [size]);
     }
 }

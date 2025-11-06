@@ -15,7 +15,6 @@ using HarmonyLib;
 
 using Il2CppInterop.Runtime;
 
-using ManosabaLoader.Patches;
 using ManosabaLoader.Utils;
 
 using UnityEngine;
@@ -212,8 +211,6 @@ namespace ManosabaLoader
             ModResourceLoader.ScriptLoaderLogError += msg => { Log.LogError(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
             
-            harmony.PatchAll(typeof(BridgingProtocolVersionPatch));
-            
             //调试用组件
             if (isDebug)
             {
@@ -263,10 +260,6 @@ namespace ManosabaLoader
         void DumpCharacterLayer()
         {
             ModDebugTools.DumpCharacterLayer();
-        }
-        void OpenServer()
-        {
-            ModBridgeTools.RestartServer();
         }
 
         void Update()
