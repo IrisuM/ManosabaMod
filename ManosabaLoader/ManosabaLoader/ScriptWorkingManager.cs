@@ -138,8 +138,17 @@ public static class ScriptWorkingManager
         hotReloadLogger.LogDebug($"Detected script file {e.ChangeType} at path: {e.FullPath}");
         if (scriptPlayer == null || scriptManager == null || e.ChangeType != WatcherChangeTypes.Changed)
             return;
-        
-        var scriptContent = File.ReadAllText(e.FullPath);
+
+        string scriptContent;
+        try
+        {
+            scriptContent = File.ReadAllText(e.FullPath);
+        }
+        catch (IOException ioException)
+        {
+            hotReloadLogger.LogError($"Failed to read changed script file at path: {e.FullPath}. Exception: {ioException}");
+            return;
+        }
         
         UniTask.Run(new Action(() => { }))
             .ContinueWith(new Action(() =>
