@@ -376,15 +376,10 @@ namespace ManosabaLoader
             {
                 return typeof(ResourceProvider).GetMethod("ResourceLoaded", 0, new Type[] { typeof(string) });
             }
-            public static void Postfix(string path, ResourceProvider __instance)
+            public static void Postfix(string path, ResourceProvider __instance, ref bool __result)
             {
-                ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded: {0}", path));
-                var local = __instance.TryCast<LocalResourceProvider>();
-                if (local != null)
-                {
-                    string fullPath = local.RootPath;
-                    ModDebugTools.ModDebugToolsLogDebug(string.Format("ResourceProvider.ResourceLoaded FullPath: {0}", fullPath));
-                }
+                var root = __instance.TryCast<LocalResourceProvider>()?.RootPath;
+                ModDebugToolsLogDebug($"ResourceProvider.ResourceLoaded, Success: {__result}, Path: {path}{(root != null ? ", Root: " + root : "")}");
             }
         }
     }

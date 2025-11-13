@@ -1,21 +1,43 @@
 ﻿using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Il2CppSystem;
+
 using Il2CppSystem.IO;
 using Il2CppSystem.Reflection;
 using Naninovel;
 using Naninovel.Metadata;
-using System;
+
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Data;
 using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using UnityEngine;
-using UnityEngine.Playables;
+
+using Constants = Metadata.Constants;
+
+namespace Metadata
+{
+    public static class Constants
+    {
+        /// <summary>Default type of the character actors.</summary>
+        public const string CharacterType = "Characters";
+        /// <summary>Default type of the background actors.</summary>
+        public const string BackgroundType = "Backgrounds";
+        /// <summary>Default type of the scenario scripts.</summary>
+        public const string ScriptsType = "Scripts";
+        /// <summary>Flag representing any type.</summary>
+        public const string WildcardType = "*";
+        /// <summary>Subtype of the script part of an endpoint.</summary>
+        public const string EndpointScript = "Script";
+        /// <summary>Subtype of the label part of an endpoint.</summary>
+        public const string EndpointLabel = "Label";
+        /// <summary>
+        /// Subtype of expression parameter context indicating that the expression is assignment.
+        /// </summary>
+        public const string Assignment = "Assignment";
+        /// <summary>
+        /// Subtype of expression parameter context indicating that the expression result
+        /// is a condition for the associated command execution.
+        /// </summary>
+        public const string Condition = "Condition";
+    }
+}
 
 namespace ManosabaLoader
 {
@@ -185,7 +207,7 @@ namespace ManosabaLoader
             var meta = new Parameter
             {
                 Id = field.Name,
-                Alias = (field.GetCustomAttribute<Naninovel.Command.ParameterAliasAttribute>() == null)?"": field.GetCustomAttribute<Naninovel.Command.ParameterAliasAttribute>().Alias,
+                Alias = field.GetCustomAttribute<Naninovel.Command.ParameterAliasAttribute>()?.Alias,
                 Required = field.GetCustomAttribute<Naninovel.Command.RequiredParameterAttribute>() != null,
                 Localizable = field.FieldType == Il2CppType.From(typeof(LocalizableTextParameter)),
                 DefaultValue = (field.GetCustomAttribute<Naninovel.Command.ParameterDefaultValueAttribute>() == null) ? "" : field.GetCustomAttribute<Naninovel.Command.ParameterDefaultValueAttribute>().Value.ToString(),
@@ -339,13 +361,13 @@ namespace ManosabaLoader
                 };
             }
 
-            Naninovel.Metadata.ValueType ResolveParameterType(Il2CppSystem.Type valueType)
+            ValueType ResolveParameterType(Il2CppSystem.Type valueType)
             {
                 if (valueType.IsArray) valueType = valueType.GetElementType();
-                if (valueType.Name == "String") return Naninovel.Metadata.ValueType.String;
-                if (valueType.Name == "Boolean") return Naninovel.Metadata.ValueType.Boolean;
-                if (valueType.Name == "Int32") return Naninovel.Metadata.ValueType.Integer;
-                return Naninovel.Metadata.ValueType.Decimal;
+                if (valueType.Name == "String") return ValueType.String;
+                if (valueType.Name == "Boolean") return ValueType.Boolean;
+                if (valueType.Name == "Int32") return ValueType.Integer;
+                return ValueType.Decimal;
             }
 
             ValueContext GetContext(Il2CppSystem.Reflection.ParameterInfo info)
