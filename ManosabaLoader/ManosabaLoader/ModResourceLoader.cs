@@ -75,6 +75,10 @@ namespace ManosabaLoader
                 var root = Path.GetDirectoryName(ScriptWorkingManager.WorkspacePath);
                 var prefix = Path.GetFileName(ScriptWorkingManager.WorkspacePath);
                 AddModLoader(ScriptWorkingManager.WorkspacePath, "", "Scripts");
+                foreach (var character in ScriptWorkingManager.ModInfo.Description.Characters)
+                {
+                    AddCharacterModLoader("", character);
+                }
             }
         }
         public static void AddModStartMenu()
