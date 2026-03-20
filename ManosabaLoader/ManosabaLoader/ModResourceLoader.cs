@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 
 using GigaCreation.NaninovelExtender.Audio;
@@ -28,6 +29,11 @@ namespace ManosabaLoader
         public static Action<string> ScriptLoaderLogWarning;
         public static Action<string> ScriptLoaderLogError;
 
+        /// <summary>已注入的 mod ProvisionSource（按加载器类型分组），语言切换时 InitializeProvisionSources 会清除这些注入，需要重新注入。</summary>
+        private static readonly List<ProvisionSource> modInjectedTextSources = new();
+        private static readonly List<ProvisionSource> modInjectedAudioSources = new();
+        private static readonly List<ProvisionSource> modInjectedVoiceSources = new();
+
         private static ProvisionSource modProvisionSource = null;
         private static ProvisionSource modTextProvisionSource = null;
         public const string modScriptPrefix = "TaffyModLoader";
@@ -46,6 +52,50 @@ namespace ManosabaLoader
                 modScriptEnter = enter;
                 modScriptEnterLabel = label;
             }
+
+            // 语言切换时重新注入被 InitializeProvisionSources 清除的 mod ProvisionSource
+            Utils.LocaleHelper.OnLocaleChanged += ReInjectModProvisionSources;
+        }
+
+        /// <summary>语言切换后重新注入已被 InitializeProvisionSources 清除的 mod ProvisionSource。</summary>
+        internal static void ReInjectModProvisionSources()
+        {
+            if (modInjectedTextSources.Count == 0 && modInjectedAudioSources.Count == 0 && modInjectedVoiceSources.Count == 0)
+                return;
+            int count = 0;
+            try
+            {
+                if (modInjectedTextSources.Count > 0)
+                {
+                    var service = Engine.GetServiceOrErr<TextManager>();
+                    var ps = service.textLoader.Cast<ResourceLoader<TextAsset>>().ProvisionSources;
+                    foreach (var s in modInjectedTextSources)
+                        ps.System_Collections_IList_Insert(0, s);
+                    count += modInjectedTextSources.Count;
+                }
+                if (modInjectedAudioSources.Count > 0)
+                {
+                    var service = Engine.GetServiceOrErr<AudioManagerExtended>();
+                    var ps = service.audioLoader.Cast<ResourceLoader<AudioClip>>().ProvisionSources;
+                    foreach (var s in modInjectedAudioSources)
+                        ps.System_Collections_IList_Insert(0, s);
+                    count += modInjectedAudioSources.Count;
+                }
+                if (modInjectedVoiceSources.Count > 0)
+                {
+                    var service = Engine.GetServiceOrErr<AudioManagerExtended>();
+                    var ps = service.voiceLoader.Cast<ResourceLoader<AudioClip>>().ProvisionSources;
+                    foreach (var s in modInjectedVoiceSources)
+                        ps.System_Collections_IList_Insert(0, s);
+                    count += modInjectedVoiceSources.Count;
+                }
+            }
+            catch (Exception ex)
+            {
+                ScriptLoaderLogWarning($"Failed to re-inject mod provision sources: {ex.Message}");
+            }
+            if (count > 0)
+                ScriptLoaderLogDebug($"Re-injected {count} mod provision source(s) after locale/provision source rebuild.");
         }
 
         public static void Awake()
@@ -53,6 +103,17 @@ namespace ManosabaLoader
             foreach (var service in Engine.services)
             {
                 ScriptLoaderLogDebug(string.Format("Find Engine:{0}",Il2CppType.TypeFromPointer(service.ObjectClass).FullName));
+            }
+
+            // 创建每帧语言检测组件，确保语言切换后 OnLocaleChanged 立即触发
+            try
+            {
+                Plugin.Instance.AddComponent<LocaleWatcherComponent>();
+                ScriptLoaderLogDebug("LocaleWatcherComponent created for per-frame locale detection.");
+            }
+            catch (Exception ex)
+            {
+                ScriptLoaderLogWarning($"Could not create LocaleWatcherComponent: {ex.Message}");
             }
 
             //添加Mod框架私有加载器
@@ -278,6 +339,7 @@ $"""
                 localResourceProvider.AddConverter(new TxtToTextAssetConverter().Cast<IRawConverter<TextAsset>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Text").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
+                modInjectedTextSources.Add(provisionSource);
                 ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, provisionSource.PathPrefix)));
             }
 
@@ -289,6 +351,7 @@ $"""
                 localResourceProvider.AddConverter(new WavToAudioClipConverter().Cast<IRawConverter<AudioClip>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Audio").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
+                modInjectedAudioSources.Add(provisionSource);
                 ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, provisionSource.PathPrefix)));
             }
 
@@ -300,6 +363,7 @@ $"""
                 localResourceProvider.AddConverter(new WavToAudioClipConverter().Cast<IRawConverter<AudioClip>>());
                 var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Voice").Replace("\\", "/"));
                 ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
+                modInjectedVoiceSources.Add(provisionSource);
                 ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, provisionSource.PathPrefix)));
             }
 

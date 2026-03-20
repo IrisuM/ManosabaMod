@@ -209,8 +209,9 @@ namespace ManosabaLoader
             ModResourceLoader.ScriptLoaderLogDebug += msg => { Log.LogDebug(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogWarning += msg => { Log.LogWarning(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogError += msg => { Log.LogError(string.Format("[ScriptLoader]\t{0}", msg)); };
+            ClassInjector.RegisterTypeInIl2Cpp<LocaleWatcherComponent>();
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
-            
+
             //调试用组件
             if (isDebug)
             {
@@ -235,6 +236,34 @@ namespace ManosabaLoader
         {
             base.Log.LogError("Plugin unloading is not supported. It may cause unexpected behavior.");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 每帧检测语言切换。由于 SelectLocale 是跨帧异步操作，
+    /// 各加载器的 InitializeProvisionSources 可能在不同帧执行，
+    /// 因此在检测到语言切换后连续多帧重新注入 mod ProvisionSource。
+    /// </summary>
+    public class LocaleWatcherComponent : MonoBehaviour
+    {
+        private string _lastKnownLocale;
+        private int _reInjectFramesRemaining;
+        private const int ReInjectDuration = 10;
+
+        void Update()
+        {
+            string currentLocale = Utils.LocaleHelper.GetCurrentLocale();
+            if (_lastKnownLocale != null && currentLocale != _lastKnownLocale)
+            {
+                _reInjectFramesRemaining = ReInjectDuration;
+            }
+            _lastKnownLocale = currentLocale;
+
+            if (_reInjectFramesRemaining > 0)
+            {
+                ModResourceLoader.ReInjectModProvisionSources();
+                _reInjectFramesRemaining--;
+            }
         }
     }
 
