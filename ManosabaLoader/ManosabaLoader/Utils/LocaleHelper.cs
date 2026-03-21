@@ -1,5 +1,7 @@
 using System;
 
+using GigaCreation.Essentials.Localization;
+
 using Naninovel;
 
 namespace ManosabaLoader.Utils
@@ -7,6 +9,9 @@ namespace ManosabaLoader.Utils
     /// <summary>
     /// 运行时本地化工具。通过 Naninovel 引擎获取当前游戏语言设置。
     /// 内部缓存 locale 字符串以避免频繁 IL2CPP 调用（每帧最多查询一次）。
+    /// 为 <see cref="ModManager.ModItem.LocalizedString.Resolve"/> 提供基础。
+    ///
+    /// <para>内部缓存 locale 字符串以避免频繁 IL2CPP 调用（每帧最多查询一次）。</para>
     /// </summary>
     public static class LocaleHelper
     {
@@ -52,6 +57,24 @@ namespace ManosabaLoader.Utils
             }
 
             return _cachedLocale ?? "zh-Hans";
+        }
+
+        /// <summary>
+        /// 将当前 locale 字符串映射为 <see cref="LocaleKind"/> 枚举。
+        /// </summary>
+        public static LocaleKind GetCurrentLocaleKind()
+        {
+            return GetCurrentLocale() switch
+            {
+                "ja" => LocaleKind.Ja,
+                "en-US" => LocaleKind.EnUs,
+                "zh-Hans" => LocaleKind.ZhHans,
+                "zh-Hant" => LocaleKind.ZhHant,
+                "ko" => LocaleKind.Ko,
+                "fr" => LocaleKind.Fr,
+                "es" => LocaleKind.Es,
+                _ => LocaleKind.ZhHans
+            };
         }
     }
 }
