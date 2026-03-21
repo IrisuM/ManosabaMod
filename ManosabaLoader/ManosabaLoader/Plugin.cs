@@ -265,6 +265,13 @@ namespace ManosabaLoader
             ModTextureHelper.TextureHelperLogDebug = msg => { Log.LogDebug(string.Format("[TextureHelper]\t{0}", msg)); };
             ModTextureHelper.TextureHelperLogWarning = msg => { Log.LogWarning(string.Format("[TextureHelper]\t{0}", msg)); };
             ModTextureHelper.TextureHelperLogError = msg => { Log.LogError(string.Format("[TextureHelper]\t{0}", msg)); };
+            // 音频格式补丁 (WAV any format + OGG Vorbis)
+            ModAudioPatch.AudioLogMessage = msg => { Log.LogMessage(string.Format("[AudioPatch]\t{0}", msg)); };
+            ModAudioPatch.AudioLogInfo = msg => { Log.LogInfo(string.Format("[AudioPatch]\t{0}", msg)); };
+            ModAudioPatch.AudioLogDebug = msg => { Log.LogDebug(string.Format("[AudioPatch]\t{0}", msg)); };
+            ModAudioPatch.AudioLogWarning = msg => { Log.LogWarning(string.Format("[AudioPatch]\t{0}", msg)); };
+            ModAudioPatch.AudioLogError = msg => { Log.LogError(string.Format("[AudioPatch]\t{0}", msg)); };
+            ModAudioPatch.Init(harmony);
 
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
             
