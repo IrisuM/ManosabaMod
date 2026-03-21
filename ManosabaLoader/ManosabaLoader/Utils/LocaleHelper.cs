@@ -7,7 +7,8 @@ using Naninovel;
 namespace ManosabaLoader.Utils
 {
     /// <summary>
-    /// 运行时本地化工具。通过 Naninovel 引擎获取当前游戏语言设置，
+    /// 运行时本地化工具。通过 Naninovel 引擎获取当前游戏语言设置。
+    /// 内部缓存 locale 字符串以避免频繁 IL2CPP 调用（每帧最多查询一次）。
     /// 为 <see cref="ModManager.ModItem.LocalizedString.Resolve"/> 提供基础。
     ///
     /// <para>内部缓存 locale 字符串以避免频繁 IL2CPP 调用（每帧最多查询一次）。</para>
@@ -17,7 +18,7 @@ namespace ManosabaLoader.Utils
         private static string _cachedLocale;
         private static int _cacheFrame = -1;
 
-        /// <summary>当 locale 发生变化时触发，供各模块清理缓存。</summary>
+        /// <summary>当 locale 发生变化时触发，供各模块清理缓存或重新注入资源。</summary>
         public static event Action OnLocaleChanged;
 
         /// <summary>
