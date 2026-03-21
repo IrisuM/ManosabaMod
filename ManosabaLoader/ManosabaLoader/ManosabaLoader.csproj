@@ -29,6 +29,13 @@
       <HintPath>..\interop\Elringus.Naninovel.Runtime.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="GigaCreation.Essentials.AddressablesUtils">
+      <HintPath>..\interop\GigaCreation.Essentials.AddressablesUtils.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="GigaCreation.Essentials.Localization">
+      <HintPath>..\interop\GigaCreation.Essentials.Localization.dll</HintPath>
+    </Reference>
     <Reference Include="GigaCreation.Essentials.SaveLoad">
       <HintPath>..\interop\GigaCreation.Essentials.SaveLoad.dll</HintPath>
       <Private>False</Private>
@@ -48,6 +55,9 @@
     <Reference Include="GigaCreation.NaninovelExtender.Movies">
       <HintPath>..\interop\GigaCreation.NaninovelExtender.Movies.dll</HintPath>
       <Private>False</Private>
+    </Reference>
+    <Reference Include="GigaCreation.NaninovelExtender.UI">
+      <HintPath>..\interop\GigaCreation.NaninovelExtender.UI.dll</HintPath>
     </Reference>
     <Reference Include="Il2Cppmscorlib">
       <HintPath>..\interop\Il2Cppmscorlib.dll</HintPath>
@@ -88,6 +98,13 @@
     <Reference Include="UnityEngine.UI">
       <HintPath>..\interop\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>..\interop\Unity.TextMeshPro.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>..\interop\UnityEngine.UIModule.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>

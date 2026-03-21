@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.IO;
 
 using GigaCreation.NaninovelExtender.Audio;
@@ -22,8 +23,8 @@ namespace ManosabaLoader
 {
     public static class ModResourceLoader
     {
-        
         public static Action<string> ScriptLoaderLogMessage;
+        public static Action<string> ScriptLoaderLogInfo;
         public static Action<string> ScriptLoaderLogDebug;
         public static Action<string> ScriptLoaderLogWarning;
         public static Action<string> ScriptLoaderLogError;
@@ -35,7 +36,107 @@ namespace ManosabaLoader
         private static string modScriptEnter = modMenuScript;
         private static string modScriptEnterLabel = null;
 
+        /// <summary>当前已加载注入数据的 mod key。null 表示未加载任何 mod（原版/标题）。</summary>
+        private static string _currentLoadedModKey = null;
+
+        /// <summary>Naninovel 变量名，用于标识当前选择的 mod。</summary>
+        public const string ModKeyVariable = "modKey";
+
+        /// <summary>原版游戏标识（不加载任何 mod 数据）。</summary>
+        public const string VanillaModKey = "__vanilla__";
+
+        /// <summary>脚本工作区标识。</summary>
+        public const string WorkspaceModKey = "__workspace__";
+
+        /// <summary>已注册的简单角色映射（ID → 原始数据），用于本地化更新。</summary>
+        private static readonly Dictionary<string, ModItem.ModSimpleCharacter> simpleCharacterMap = new();
+
+        /// <summary>该 ID 是否为 Mod 注册的简单角色。</summary>
+        public static bool IsModSimpleCharacter(string id) => simpleCharacterMap.ContainsKey(id);
+
+        /// <summary>获取简单角色当前语言的 DisplayName（含 \u200B 前缀）。</summary>
+        public static string GetSimpleCharacterDisplayName(string id)
+        {
+            if (!simpleCharacterMap.TryGetValue(id, out var sc)) return null;
+            return '\u200B' + (sc.DisplayName?.Resolve("") ?? "");
+        }
+
         public static NamedString ModScriptEnter => new NamedString(modScriptEnter, modScriptEnterLabel);
+
+        /// <summary>
+        /// 从 Naninovel 变量中读取当前选择的 mod key。
+        /// 返回 null 表示未选择 mod 或选择了原版。
+        /// </summary>
+        public static string GetCurrentModKey()
+        {
+            try
+            {
+                if (!Engine.Initialized) return null;
+                var varManager = Engine.GetService<ICustomVariableManager>();
+                if (varManager == null) return null;
+                var modKey = varManager.GetVariableValue(ModKeyVariable).String;
+                if (string.IsNullOrEmpty(modKey) || modKey == VanillaModKey) return null;
+                return modKey;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// 确保已为当前 mod 加载了注入数据。
+        /// 在注入 hook 中调用此方法以实现延迟加载。
+        /// </summary>
+        public static void EnsureModDataLoaded()
+        {
+            string wantedKey = GetCurrentModKey();
+            if (wantedKey == _currentLoadedModKey) return;
+
+            // mod 发生变化，清理旧数据并加载新数据
+            ClearAllModData();
+            if (wantedKey != null)
+            {
+                LoadSelectedModData(wantedKey);
+            }
+            _currentLoadedModKey = wantedKey;
+        }
+
+        /// <summary>清理所有 mod 注入数据，释放内存。</summary>
+        public static void ClearAllModData()
+        {
+            ModClueLoader.ClearModData();
+            ModRuleNoteLoader.ClearModData();
+            ModProfileLoader.ClearModData();
+            ModMovieLoader.ClearModData();
+            _currentLoadedModKey = null;
+            ScriptLoaderLogInfo("All mod injection data cleared.");
+        }
+
+        /// <summary>加载指定 mod 的注入数据。</summary>
+        private static void LoadSelectedModData(string modKey)
+        {
+            ModItem modItem;
+            string modPath;
+
+            if (modKey == WorkspaceModKey && ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo != null)
+            {
+                modItem = ScriptWorkingManager.ModInfo;
+                modPath = ScriptWorkingManager.WorkspacePath;
+            }
+            else if (ModManager.ModManager.Items.TryGetValue(modKey, out modItem))
+            {
+                modPath = Path.Combine(Plugin.Instance.ModRootPath, modKey);
+            }
+            else
+            {
+                ScriptLoaderLogWarning($"Mod key '{modKey}' not found, no data loaded.");
+                return;
+            }
+
+            ModClueLoader.LoadModData(modKey, modPath, modItem);
+            ModRuleNoteLoader.LoadModData(modKey, modItem);
+            ModProfileLoader.LoadModData(modKey, modPath, modItem);
+            ModMovieLoader.LoadModData(modKey, modPath);
+            ScriptLoaderLogMessage($"Loaded injection data for mod: {modKey}");
+        }
 
         public static void Init(Harmony instance, string enter, string label, bool directMode)
         {
@@ -45,6 +146,50 @@ namespace ManosabaLoader
             {
                 modScriptEnter = enter;
                 modScriptEnterLabel = label;
+            }
+
+            // 初始化 Mod 线索加载器
+            ModClueLoader.Init(instance);
+
+            // 初始化 Mod 规则/笔记加载器
+            ModRuleNoteLoader.Init(instance);
+
+            // 初始化存档画面章节名显示
+            ModChapterDisplay.Init(instance);
+
+            // 初始化 Mod 角色简介加载器
+            ModProfileLoader.Init(instance);
+
+            // 初始化统一 WitchBook 补丁（@update 命令拦截 + GetActiveEvidences 安全网）
+            ModWitchBookPatch.Init(instance);
+
+            // 初始化 Mod 视频加载器（@movie 命令支持）
+            ModMovieLoader.Init(instance);
+
+            // 语言切换时更新简单角色 DisplayName
+            Utils.LocaleHelper.OnLocaleChanged += RefreshSimpleCharacterDisplayNames;
+        }
+
+        /// <summary>语言切换时刷新所有简单角色的 CharacterMetadata.DisplayName。</summary>
+        private static void RefreshSimpleCharacterDisplayNames()
+        {
+            if (simpleCharacterMap.Count == 0) return;
+            try
+            {
+                var service = Engine.GetServiceOrErr<CharacterManager>();
+                foreach (var kvp in simpleCharacterMap)
+                {
+                    if (service.Configuration.ActorMetadataMap.ContainsId(kvp.Key))
+                    {
+                        var meta = service.Configuration.ActorMetadataMap[kvp.Key];
+                        meta.DisplayName = '\u200B' + (kvp.Value.DisplayName?.Resolve("") ?? "");
+                    }
+                }
+                ScriptLoaderLogDebug($"Refreshed {simpleCharacterMap.Count} simple character display names for locale change.");
+            }
+            catch (Exception ex)
+            {
+                ScriptLoaderLogWarning($"Failed to refresh simple character display names: {ex.Message}");
             }
         }
 
@@ -64,10 +209,10 @@ namespace ManosabaLoader
             foreach (var item in ModManager.ModManager.Items)
             {
                 AddModLoader(rootPath, item.Key, "Scripts");
-                foreach(var character in item.Value.Description.Characters)
-                {
-                    AddCharacterModLoader(item.Key, character);
-                }
+                foreach (var sc in item.Value.Description.SimpleCharacters)
+                    AddSimpleCharacter(item.Key, sc);
+                foreach (var c in item.Value.Description.Characters)
+                    AddRichCharacter(item.Key, c);
             }
             
             if (ScriptWorkingManager.IsEnabled)
@@ -75,10 +220,10 @@ namespace ManosabaLoader
                 var root = Path.GetDirectoryName(ScriptWorkingManager.WorkspacePath);
                 var prefix = Path.GetFileName(ScriptWorkingManager.WorkspacePath);
                 AddModLoader(ScriptWorkingManager.WorkspacePath, "", "Scripts");
-                foreach (var character in ScriptWorkingManager.ModInfo.Description.Characters)
-                {
-                    AddCharacterModLoader("", character);
-                }
+                foreach (var sc in ScriptWorkingManager.ModInfo.Description.SimpleCharacters)
+                    AddSimpleCharacter("", sc);
+                foreach (var c in ScriptWorkingManager.ModInfo.Description.Characters)
+                    AddRichCharacter("", c);
             }
         }
         public static void AddModStartMenu()
@@ -117,6 +262,7 @@ namespace ManosabaLoader
             var version = Engine.GetServiceOrErr<StateManagerExtended>().GlobalState.GetState<VersioningManager.VersioningState>().EditedVersion;
             choice_list += "@choice \"原版游戏剧情\" Lock:false play:true show:true" + "\n";
             choice_list += "    @set \"nextScenario=\\\"Act01_Chapter01/Act01_Chapter01_Adv01\\\"\"" + "\n";
+            choice_list += "    @set \"modKey=\\\"" + VanillaModKey + "\\\"\"" + "\n";
             choice_list += "    @set \"modName=\\\"原版游戏剧情\\\"\"" + "\n";
             choice_list += "    @set \"modDescription=\\\"原汁原味的游戏内容。\\\"\"" + "\n";
             choice_list += "    @set \"modAuthor=\\\"Acacia, Re,AER\\\"\"" + "\n";
@@ -131,6 +277,7 @@ namespace ManosabaLoader
                 choice_list += 
 $"""
 @choice "工作区：{modItem.Description.Name}" Lock:false play:true show:true
+    @set "modKey=\"{WorkspaceModKey}\""
     @set "modName=\"{modItem.Description.Name}\""
     @set "modDescription=\"{modItem.Description.Description}\""
     @set "modAuthor=\"{modItem.Description.Author}\""
@@ -167,6 +314,7 @@ $"""
                 }
 
                 choice_list += "@choice \"" + item.Value.Description.Name + "\" Lock:false play:true show:true" + "\n";
+                choice_list += "    @set \"modKey=\\\"" + item.Key + "\\\"\"" + "\n";
                 choice_list += "    @set \"modName=\\\"" + item.Value.Description.Name + "\\\"\"" + "\n";
                 choice_list += "    @set \"modDescription=\\\"" + item.Value.Description.Description + "\\\"\"" + "\n";
                 choice_list += "    @set \"modAuthor=\\\"" + item.Value.Description.Author + "\\\"\"" + "\n";
@@ -222,25 +370,69 @@ $"""
                 service.textLoader.Cast<ResourceLoader<TextAsset>>().AddLoadedResource(loadedResource);
             }
         }
-        //添加 Mod角色加载器
-        public static void AddCharacterModLoader(string prefix, ModItem.ModCharacter character)
+        /// <summary>注册 ModSimpleCharacter → 仅 Naninovel CharacterMetadata（DisplayName）。</summary>
+        public static void AddSimpleCharacter(string prefix, ModItem.ModSimpleCharacter character)
         {
+            var service = Engine.GetServiceOrErr<CharacterManager>();
+            if (service.Configuration.ActorMetadataMap.ContainsId(character.Id)) return;
+
+            var meta = CreateBaseCharacterMeta(prefix);
+            meta.DisplayName = '\u200B' + (character.DisplayName?.Resolve("") ?? "");
+
+            service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
+            simpleCharacterMap[character.Id] = character;
+            ScriptLoaderLogDebug($"{service.GetIl2CppType().FullName} Add SimpleCharacter:{character.Id}");
+        }
+
+        /// <summary>
+        /// 注册 ModCharacter → Naninovel CharacterMetadata
+        /// （DisplayName 从 FamilyName + Name 自动生成）。
+        /// </summary>
+        public static void AddRichCharacter(string prefix, ModItem.ModCharacter character)
+        {
+            var service = Engine.GetServiceOrErr<CharacterManager>();
+            if (service.Configuration.ActorMetadataMap.ContainsId(character.Id)) return;
+
+            var meta = CreateBaseCharacterMeta(prefix);
+
+            // DisplayName 从 FamilyName + Name 自动派生
+            string familyName = character.FamilyName?.Resolve();
+            string givenName = character.Name?.Resolve();
+            string displayName = (familyName ?? "") + (givenName ?? "");
+            if (string.IsNullOrEmpty(displayName)) displayName = character.Id;
+            meta.DisplayName = '\u200B' + displayName;
+
+            // 角色主题色
+            if (!string.IsNullOrEmpty(character.Color))
             {
-                //角色加载器
-                var service = Engine.GetServiceOrErr<CharacterManager>();
-                if (!service.Configuration.ActorMetadataMap.ContainsId(character.ActorId))
+                string colorStr = character.Color;
+                // ColorUtility.TryParseHtmlString 需要 # 前缀
+                if (!colorStr.StartsWith("#")) colorStr = "#" + colorStr;
+                if (UnityEngine.ColorUtility.TryParseHtmlString(colorStr, out var parsedColor))
                 {
-                    var character_meta = new CharacterMetadata();
-                    character_meta.Implementation = typeof(SpriteCharacter).AssemblyQualifiedName;
-                    var providerTypes = new Il2CppSystem.Collections.Generic.List<string>();
-                    providerTypes.Add(prefix.Replace("\\", "/"));
-                    character_meta.Loader = new() { PathPrefix = Path.Combine(prefix, "Characters").Replace("\\", "/"), ProviderTypes = providerTypes };
-                    character_meta.Pivot = new(.5f, .695f);
-                    character_meta.DisplayName = '\u200B' + character.DisplayName;
-                    service.Configuration.ActorMetadataMap.AddRecord(character.ActorId, character_meta);
-                    ScriptLoaderLogDebug(string.Format("{0} Add Character:{1}", service.GetIl2CppType().FullName, character.ActorId));
+                    meta.UseCharacterColor = true;
+                    meta.NameColor = parsedColor;
+                    meta.MessageColor = UnityEngine.Color.white;
+                }
+                else
+                {
+                    ScriptLoaderLogWarning($"Invalid color format '{character.Color}' for character '{character.Id}'");
                 }
             }
+
+            service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
+            ScriptLoaderLogDebug($"{service.GetIl2CppType().FullName} Add Character:{character.Id}");
+        }
+
+        private static CharacterMetadata CreateBaseCharacterMeta(string prefix)
+        {
+            var meta = new CharacterMetadata();
+            meta.Implementation = typeof(SpriteCharacter).AssemblyQualifiedName;
+            var providerTypes = new Il2CppSystem.Collections.Generic.List<string>();
+            providerTypes.Add(prefix.Replace("\\", "/"));
+            meta.Loader = new() { PathPrefix = Path.Combine(prefix, "Characters").Replace("\\", "/"), ProviderTypes = providerTypes };
+            meta.Pivot = new(.5f, .695f);
+            return meta;
         }
         
         //添加 Mod加载器
@@ -366,6 +558,8 @@ $"""
         [HarmonyPostfix]
         static void TitleUi_Activate_Patch(ref TitleUi __instance)
         {
+            // 回到标题画面时清理 mod 注入数据
+            ModResourceLoader.ClearAllModData();
             ModResourceLoader.HookStartGame(__instance);
         }
     }

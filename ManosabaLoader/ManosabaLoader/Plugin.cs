@@ -196,7 +196,7 @@ namespace ManosabaLoader
             ModMetadataGenerator.ModMetadataGeneratorLogDebug += msg => { Log.LogDebug(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
             ModMetadataGenerator.ModMetadataGeneratorLogWarning += msg => { Log.LogWarning(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
             ModMetadataGenerator.ModMetadataGeneratorLogError += msg => { Log.LogError(string.Format("[ModMetadataGenerator]\t{0}", msg)); };
-            
+
             //初始化Mod管理器
             ModManager.ModManager.ModManagerLogMessage += msg => { Log.LogMessage(string.Format("[ModManager]\t{0}", msg)); };
             ModManager.ModManager.ModManagerLogDebug += msg => { Log.LogDebug(string.Format("[ModManager]\t{0}", msg)); };
@@ -204,11 +204,68 @@ namespace ManosabaLoader
             ModManager.ModManager.ModManagerLogError += msg => { Log.LogError(string.Format("[ModManager]\t{0}", msg)); };
             ModManager.ModManager.Init(ModRootPath);
 
+            // 若有待确认的 schema 迁移，挂载 IMGUI 弹窗组件
+            if (ModManager.ModItem.PendingMigrations.Count > 0)
+            {
+                AddComponent<ModManager.MigrationDialog>();
+            }
+
             //初始化加载器
             ModResourceLoader.ScriptLoaderLogMessage += msg => { Log.LogMessage(string.Format("[ScriptLoader]\t{0}", msg)); };
+            ModResourceLoader.ScriptLoaderLogInfo += msg => { Log.LogInfo(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogDebug += msg => { Log.LogDebug(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogWarning += msg => { Log.LogWarning(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogError += msg => { Log.LogError(string.Format("[ScriptLoader]\t{0}", msg)); };
+
+            // 子模块日志委托
+            ModClueLoader.ClueLogMessage = msg => { Log.LogMessage(string.Format("[ClueLoader]\t{0}", msg)); };
+            ModClueLoader.ClueLogInfo = msg => { Log.LogInfo(string.Format("[ClueLoader]\t{0}", msg)); };
+            ModClueLoader.ClueLogDebug = msg => { Log.LogDebug(string.Format("[ClueLoader]\t{0}", msg)); };
+            ModClueLoader.ClueLogWarning = msg => { Log.LogWarning(string.Format("[ClueLoader]\t{0}", msg)); };
+            ModClueLoader.ClueLogError = msg => { Log.LogError(string.Format("[ClueLoader]\t{0}", msg)); };
+
+            ModRuleNoteLoader.RuleNoteLogMessage = msg => { Log.LogMessage(string.Format("[RuleNoteLoader]\t{0}", msg)); };
+            ModRuleNoteLoader.RuleNoteLogInfo = msg => { Log.LogInfo(string.Format("[RuleNoteLoader]\t{0}", msg)); };
+            ModRuleNoteLoader.RuleNoteLogDebug = msg => { Log.LogDebug(string.Format("[RuleNoteLoader]\t{0}", msg)); };
+            ModRuleNoteLoader.RuleNoteLogWarning = msg => { Log.LogWarning(string.Format("[RuleNoteLoader]\t{0}", msg)); };
+            ModRuleNoteLoader.RuleNoteLogError = msg => { Log.LogError(string.Format("[RuleNoteLoader]\t{0}", msg)); };
+
+            ModProfileLoader.ProfileLogMessage = msg => { Log.LogMessage(string.Format("[ProfileLoader]\t{0}", msg)); };
+            ModProfileLoader.ProfileLogInfo = msg => { Log.LogInfo(string.Format("[ProfileLoader]\t{0}", msg)); };
+            ModProfileLoader.ProfileLogDebug = msg => { Log.LogDebug(string.Format("[ProfileLoader]\t{0}", msg)); };
+            ModProfileLoader.ProfileLogWarning = msg => { Log.LogWarning(string.Format("[ProfileLoader]\t{0}", msg)); };
+            ModProfileLoader.ProfileLogError = msg => { Log.LogError(string.Format("[ProfileLoader]\t{0}", msg)); };
+
+            ModMovieLoader.MovieLogMessage = msg => { Log.LogMessage(string.Format("[MovieLoader]\t{0}", msg)); };
+            ModMovieLoader.MovieLogInfo = msg => { Log.LogInfo(string.Format("[MovieLoader]\t{0}", msg)); };
+            ModMovieLoader.MovieLogDebug = msg => { Log.LogDebug(string.Format("[MovieLoader]\t{0}", msg)); };
+            ModMovieLoader.MovieLogWarning = msg => { Log.LogWarning(string.Format("[MovieLoader]\t{0}", msg)); };
+            ModMovieLoader.MovieLogError = msg => { Log.LogError(string.Format("[MovieLoader]\t{0}", msg)); };
+
+            ModWitchBookPatch.WitchBookLogMessage = msg => { Log.LogMessage(string.Format("[WitchBookPatch]\t{0}", msg)); };
+            ModWitchBookPatch.WitchBookLogInfo = msg => { Log.LogInfo(string.Format("[WitchBookPatch]\t{0}", msg)); };
+            ModWitchBookPatch.WitchBookLogDebug = msg => { Log.LogDebug(string.Format("[WitchBookPatch]\t{0}", msg)); };
+            ModWitchBookPatch.WitchBookLogWarning = msg => { Log.LogWarning(string.Format("[WitchBookPatch]\t{0}", msg)); };
+            ModWitchBookPatch.WitchBookLogError = msg => { Log.LogError(string.Format("[WitchBookPatch]\t{0}", msg)); };
+
+            ModChapterDisplay.ChapterLogMessage = msg => { Log.LogMessage(string.Format("[ChapterDisplay]\t{0}", msg)); };
+            ModChapterDisplay.ChapterLogInfo = msg => { Log.LogInfo(string.Format("[ChapterDisplay]\t{0}", msg)); };
+            ModChapterDisplay.ChapterLogDebug = msg => { Log.LogDebug(string.Format("[ChapterDisplay]\t{0}", msg)); };
+            ModChapterDisplay.ChapterLogWarning = msg => { Log.LogWarning(string.Format("[ChapterDisplay]\t{0}", msg)); };
+            ModChapterDisplay.ChapterLogError = msg => { Log.LogError(string.Format("[ChapterDisplay]\t{0}", msg)); };
+
+            Il2CppFieldHelper.FieldHelperLogMessage = msg => { Log.LogMessage(string.Format("[FieldHelper]\t{0}", msg)); };
+            Il2CppFieldHelper.FieldHelperLogInfo = msg => { Log.LogInfo(string.Format("[FieldHelper]\t{0}", msg)); };
+            Il2CppFieldHelper.FieldHelperLogDebug = msg => { Log.LogDebug(string.Format("[FieldHelper]\t{0}", msg)); };
+            Il2CppFieldHelper.FieldHelperLogWarning = msg => { Log.LogWarning(string.Format("[FieldHelper]\t{0}", msg)); };
+            Il2CppFieldHelper.FieldHelperLogError = msg => { Log.LogError(string.Format("[FieldHelper]\t{0}", msg)); };
+
+            ModTextureHelper.TextureHelperLogMessage = msg => { Log.LogMessage(string.Format("[TextureHelper]\t{0}", msg)); };
+            ModTextureHelper.TextureHelperLogInfo = msg => { Log.LogInfo(string.Format("[TextureHelper]\t{0}", msg)); };
+            ModTextureHelper.TextureHelperLogDebug = msg => { Log.LogDebug(string.Format("[TextureHelper]\t{0}", msg)); };
+            ModTextureHelper.TextureHelperLogWarning = msg => { Log.LogWarning(string.Format("[TextureHelper]\t{0}", msg)); };
+            ModTextureHelper.TextureHelperLogError = msg => { Log.LogError(string.Format("[TextureHelper]\t{0}", msg)); };
+
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
             
             //调试用组件
