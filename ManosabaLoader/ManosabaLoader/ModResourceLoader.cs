@@ -56,6 +56,9 @@ namespace ManosabaLoader
         /// <summary>已注册的简单角色映射（ID → 原始数据），用于本地化更新。</summary>
         private static readonly Dictionary<string, ModItem.ModSimpleCharacter> simpleCharacterMap = new();
 
+        /// <summary>已注册的富角色映射（ID → 原始数据），用于本地化更新。</summary>
+        private static readonly Dictionary<string, ModItem.ModCharacter> richCharacterMap = new();
+
         /// <summary>该 ID 是否为 Mod 注册的简单角色。</summary>
         public static bool IsModSimpleCharacter(string id) => simpleCharacterMap.ContainsKey(id);
 
@@ -63,7 +66,7 @@ namespace ManosabaLoader
         public static string GetSimpleCharacterDisplayName(string id)
         {
             if (!simpleCharacterMap.TryGetValue(id, out var sc)) return null;
-            return '\u200B' + (sc.DisplayName?.Resolve("") ?? "");
+            return '\u200B' + ResolveDisplayName(sc.Id, sc.DisplayName, sc.Color, sc.FamilyName, sc.Name);
         }
 
         public static NamedString ModScriptEnter => new NamedString(modScriptEnter, modScriptEnterLabel);
@@ -171,8 +174,8 @@ namespace ManosabaLoader
             // 初始化 Mod 视频加载器（@movie 命令支持）
             ModMovieLoader.Init(instance);
 
-            // 语言切换时更新简单角色 DisplayName
-            Utils.LocaleHelper.OnLocaleChanged += RefreshSimpleCharacterDisplayNames;
+            // 语言切换时更新角色 DisplayName
+            Utils.LocaleHelper.OnLocaleChanged += RefreshCharacterDisplayNames;
         }
 
         /// <summary>语言切换后重新注入已被 InitializeProvisionSources 清除的 mod ProvisionSource。</summary>
@@ -216,27 +219,79 @@ namespace ManosabaLoader
                 ScriptLoaderLogDebug($"Re-injected {count} mod provision source(s) after locale/provision source rebuild.");
         }
 
-        /// <summary>语言切换时刷新所有简单角色的 CharacterMetadata.DisplayName。</summary>
-        private static void RefreshSimpleCharacterDisplayNames()
+        /// <summary>语言切换时刷新所有 mod 角色的 CharacterMetadata.DisplayName。</summary>
+        private static void RefreshCharacterDisplayNames()
         {
-            if (simpleCharacterMap.Count == 0) return;
+            if (simpleCharacterMap.Count == 0 && richCharacterMap.Count == 0) return;
             try
             {
                 var service = Engine.GetServiceOrErr<CharacterManager>();
+                int count = 0;
                 foreach (var kvp in simpleCharacterMap)
                 {
                     if (service.Configuration.ActorMetadataMap.ContainsId(kvp.Key))
                     {
+                        var sc = kvp.Value;
                         var meta = service.Configuration.ActorMetadataMap[kvp.Key];
-                        meta.DisplayName = '\u200B' + (kvp.Value.DisplayName?.Resolve("") ?? "");
+                        meta.DisplayName = '\u200B' + ResolveDisplayName(sc.Id, sc.DisplayName, sc.Color, sc.FamilyName, sc.Name);
+                        count++;
                     }
                 }
-                ScriptLoaderLogDebug($"Refreshed {simpleCharacterMap.Count} simple character display names for locale change.");
+                foreach (var kvp in richCharacterMap)
+                {
+                    if (service.Configuration.ActorMetadataMap.ContainsId(kvp.Key))
+                    {
+                        var rc = kvp.Value;
+                        var meta = service.Configuration.ActorMetadataMap[kvp.Key];
+                        meta.DisplayName = '\u200B' + ResolveDisplayName(rc.Id, rc.DisplayName, rc.Color, rc.FamilyName, rc.Name);
+                        count++;
+                    }
+                }
+                ScriptLoaderLogDebug($"Refreshed {count} character display names for locale change.");
             }
             catch (Exception ex)
             {
-                ScriptLoaderLogWarning($"Failed to refresh simple character display names: {ex.Message}");
+                ScriptLoaderLogWarning($"Failed to refresh character display names: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 统一的 DisplayName 解析逻辑（SimpleCharacter 和 Character 共用）。
+        ///
+        /// 优先级：
+        /// 1. 若 DisplayName 已设置 → 直接使用
+        /// 2. Color 未设置时默认白色
+        /// 3. 若 FamilyName + Name 均已设置 → 自动生成富文本
+        /// 4. 仅部分名字或均未设置 → 使用可用名字或回退到 Id，按姓氏格式处理
+        /// </summary>
+        private static string ResolveDisplayName(string id, ModItem.LocalizedString displayName, string color, ModItem.LocalizedString familyName, ModItem.LocalizedString name)
+        {
+            // 优先级 1：显式 DisplayName
+            string explicitName = displayName?.Resolve();
+            if (!string.IsNullOrEmpty(explicitName))
+                return explicitName;
+
+            // 优先级 2：确定颜色（默认白色，不带 # 前缀）
+            string colorHex = "FFFFFF";
+            if (!string.IsNullOrEmpty(color))
+            {
+                colorHex = color;
+                if (colorHex.StartsWith("#"))
+                    colorHex = colorHex.Substring(1);
+            }
+
+            string family = familyName?.Resolve();
+            string given = name?.Resolve();
+
+            // 优先级 3：姓名均有 → 自动生成全名富文本
+            if (!string.IsNullOrEmpty(family) && !string.IsNullOrEmpty(given))
+                return AuthorTaggedTextGenerator.BuildDisplayName(family, given, colorHex);
+
+            // 优先级 4：回退到可用名字或 Id，按姓氏格式处理
+            string fallback = !string.IsNullOrEmpty(family) ? family
+                : !string.IsNullOrEmpty(given) ? given
+                : id;
+            return AuthorTaggedTextGenerator.BuildSimpleDisplayName(fallback, colorHex);
         }
 
         public static void Awake()
@@ -427,57 +482,31 @@ $"""
                 service.textLoader.Cast<ResourceLoader<TextAsset>>().AddLoadedResource(loadedResource);
             }
         }
-        /// <summary>注册 ModSimpleCharacter → 仅 Naninovel CharacterMetadata（DisplayName）。</summary>
+        /// <summary>注册 ModSimpleCharacter → 仅 Naninovel CharacterMetadata。</summary>
         public static void AddSimpleCharacter(string prefix, ModItem.ModSimpleCharacter character)
         {
             var service = Engine.GetServiceOrErr<CharacterManager>();
             if (service.Configuration.ActorMetadataMap.ContainsId(character.Id)) return;
 
             var meta = CreateBaseCharacterMeta(prefix);
-            meta.DisplayName = '\u200B' + (character.DisplayName?.Resolve("") ?? "");
+            meta.DisplayName = '\u200B' + ResolveDisplayName(character.Id, character.DisplayName, character.Color, character.FamilyName, character.Name);
 
             service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
             simpleCharacterMap[character.Id] = character;
             ScriptLoaderLogDebug($"{service.GetIl2CppType().FullName} Add SimpleCharacter:{character.Id}");
         }
 
-        /// <summary>
-        /// 注册 ModCharacter → Naninovel CharacterMetadata
-        /// （DisplayName 从 FamilyName + Name 自动生成）。
-        /// </summary>
+        /// <summary>注册 ModCharacter → Naninovel CharacterMetadata + CharacterData + AuthorData。</summary>
         public static void AddRichCharacter(string prefix, ModItem.ModCharacter character)
         {
             var service = Engine.GetServiceOrErr<CharacterManager>();
             if (service.Configuration.ActorMetadataMap.ContainsId(character.Id)) return;
 
             var meta = CreateBaseCharacterMeta(prefix);
-
-            // DisplayName 从 FamilyName + Name 自动派生
-            string familyName = character.FamilyName?.Resolve();
-            string givenName = character.Name?.Resolve();
-            string displayName = (familyName ?? "") + (givenName ?? "");
-            if (string.IsNullOrEmpty(displayName)) displayName = character.Id;
-            meta.DisplayName = '\u200B' + displayName;
-
-            // 角色主题色
-            if (!string.IsNullOrEmpty(character.Color))
-            {
-                string colorStr = character.Color;
-                // ColorUtility.TryParseHtmlString 需要 # 前缀
-                if (!colorStr.StartsWith("#")) colorStr = "#" + colorStr;
-                if (UnityEngine.ColorUtility.TryParseHtmlString(colorStr, out var parsedColor))
-                {
-                    meta.UseCharacterColor = true;
-                    meta.NameColor = parsedColor;
-                    meta.MessageColor = UnityEngine.Color.white;
-                }
-                else
-                {
-                    ScriptLoaderLogWarning($"Invalid color format '{character.Color}' for character '{character.Id}'");
-                }
-            }
+            meta.DisplayName = '\u200B' + ResolveDisplayName(character.Id, character.DisplayName, character.Color, character.FamilyName, character.Name);
 
             service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
+            richCharacterMap[character.Id] = character;
             ScriptLoaderLogDebug($"{service.GetIl2CppType().FullName} Add Character:{character.Id}");
         }
 

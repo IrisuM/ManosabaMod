@@ -19,8 +19,20 @@ namespace ManosabaLoader.ModManager
             /// <summary>Naninovel actor ID，即剧本中使用的角色标识符。</summary>
             public string Id { get; set; } = "Taffy";
 
-            /// <summary>角色显示名，支持本地化。</summary>
+            /// <summary>角色显示名，支持本地化。若设置则为最高优先级，直接使用。</summary>
             public LocalizedString DisplayName { get; set; }
+
+            /// <summary>
+            /// 角色主题色（HTML 格式，如 "#C8AACC" 或 "C8AACC"）。
+            /// 未设置时默认为白色。
+            /// </summary>
+            public string Color { get; set; } = "";
+
+            /// <summary>角色名（名前 / given name）。与 FamilyName 配合自动生成 DisplayName。</summary>
+            public LocalizedString Name { get; set; }
+
+            /// <summary>角色姓（姓氏 / family name）。与 Name 配合自动生成 DisplayName。</summary>
+            public LocalizedString FamilyName { get; set; }
         }
 
         /// <summary>
@@ -32,16 +44,19 @@ namespace ManosabaLoader.ModManager
             /// <summary>Naninovel actor ID，同时也用作 CharacterData / AuthorData 的 ID。</summary>
             public string Id { get; set; } = "Taffy";
 
+            /// <summary>角色显示名，支持本地化。若设置则为最高优先级，直接使用。</summary>
+            public LocalizedString DisplayName { get; set; }
+
             /// <summary>
             /// 角色主题色（HTML 格式，如 "#C8AACC" 或 "C8AACC"）。
-            /// 用于 CharacterMetadata.NameColor 和 AuthorText 颜色标记。
+            /// 未设置时默认为白色。用于 DisplayName 富文本标记和 AuthorText 颜色标记。
             /// </summary>
             public string Color { get; set; } = "";
 
-            /// <summary>角色名（名前 / given name）。</summary>
+            /// <summary>角色名（名前 / given name）。与 FamilyName 配合自动生成 DisplayName。</summary>
             public LocalizedString Name { get; set; }
 
-            /// <summary>角色姓（姓氏 / family name）。</summary>
+            /// <summary>角色姓（姓氏 / family name）。与 Name 配合自动生成 DisplayName。</summary>
             public LocalizedString FamilyName { get; set; }
 
             /// <summary>年龄文字。</summary>
