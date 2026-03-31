@@ -490,6 +490,7 @@ $"""
 
             var meta = CreateBaseCharacterMeta(prefix);
             meta.DisplayName = '\u200B' + ResolveDisplayName(character.Id, character.DisplayName, character.Color, character.FamilyName, character.Name);
+            ApplyCharacterColor(meta, character.Color, character.Id);
 
             service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
             simpleCharacterMap[character.Id] = character;
@@ -504,10 +505,29 @@ $"""
 
             var meta = CreateBaseCharacterMeta(prefix);
             meta.DisplayName = '\u200B' + ResolveDisplayName(character.Id, character.DisplayName, character.Color, character.FamilyName, character.Name);
+            ApplyCharacterColor(meta, character.Color, character.Id);
 
             service.Configuration.ActorMetadataMap.AddRecord(character.Id, meta);
             richCharacterMap[character.Id] = character;
             ScriptLoaderLogDebug($"{service.GetIl2CppType().FullName} Add Character:{character.Id}");
+        }
+
+        /// <summary>将角色 Color 应用到 CharacterMetadata（UseCharacterColor / NameColor / MessageColor）。</summary>
+        private static void ApplyCharacterColor(CharacterMetadata meta, string color, string characterId)
+        {
+            string colorStr = !string.IsNullOrEmpty(color) ? color : "#FFFFFF";
+            if (!colorStr.StartsWith("#")) colorStr = "#" + colorStr;
+
+            if (UnityEngine.ColorUtility.TryParseHtmlString(colorStr, out var parsedColor))
+            {
+                meta.UseCharacterColor = true;
+                meta.NameColor = parsedColor;
+                meta.MessageColor = UnityEngine.Color.white;
+            }
+            else
+            {
+                ScriptLoaderLogWarning($"Invalid color format '{color}' for character '{characterId}'");
+            }
         }
 
         private static CharacterMetadata CreateBaseCharacterMeta(string prefix)
