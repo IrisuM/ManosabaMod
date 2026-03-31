@@ -38,6 +38,8 @@ namespace ManosabaLoader
         private static ProvisionSource modTextProvisionSource = null;
         public const string modScriptPrefix = "TaffyModLoader";
         const string modMenuScript = "TaffyStart";
+        /// <summary>语言切换后需要重新生成 mod 选择菜单脚本。</summary>
+        private static bool _modMenuDirty = false;
         private static string modScriptEnter = modMenuScript;
         private static string modScriptEnterLabel = null;
 
@@ -171,8 +173,9 @@ namespace ManosabaLoader
             // 初始化 Mod 视频加载器（@movie 命令支持）
             ModMovieLoader.Init(instance);
 
-            // 语言切换时更新简单角色 DisplayName
+            // 语言切换时更新简单角色 DisplayName 和标记菜单脚本需要重新生成
             Utils.LocaleHelper.OnLocaleChanged += RefreshSimpleCharacterDisplayNames;
+            Utils.LocaleHelper.OnLocaleChanged += () => _modMenuDirty = true;
         }
 
         /// <summary>语言切换后重新注入已被 InitializeProvisionSources 清除的 mod ProvisionSource。</summary>
@@ -287,7 +290,23 @@ namespace ManosabaLoader
         {
             {
                 var service = Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();
-                if (service.scripts.ScriptLoader.GetLoaded(modMenuScript) != null)
+                var scriptLoader = service.scripts.ScriptLoader.Cast<ResourceLoader<Script>>();
+
+                if (_modMenuDirty)
+                {
+                    // 语言切换后：释放旧脚本资源，允许后续重新生成
+                    _modMenuDirty = false;
+                    string path = Path.Combine(modScriptPrefix, "Scripts", modMenuScript).Replace("\\", "/");
+                    scriptLoader.Release(path, modProvisionSource, unload: true);
+
+                    string textPath = Path.Combine(modScriptPrefix, "Text/Scripts", modMenuScript).Replace("\\", "/");
+                    Engine.GetServiceOrErr<TextManager>().textLoader
+                        .Cast<ResourceLoader<TextAsset>>()
+                        .Release(textPath, modProvisionSource, unload: true);
+
+                    ScriptLoaderLogDebug("Mod menu script released for locale-change regeneration.");
+                }
+                else if (scriptLoader.GetLoaded(modMenuScript) != null)
                 {
                     return;
                 }
@@ -333,11 +352,11 @@ namespace ManosabaLoader
                 var modItem = ScriptWorkingManager.ModInfo;
                 choice_list += 
 $"""
-@choice "工作区：{modItem.Description.Name}" Lock:false play:true show:true
+@choice "工作区：{modItem.Description.Name.Resolve()}" Lock:false play:true show:true
     @set "modKey=\"{WorkspaceModKey}\""
-    @set "modName=\"{modItem.Description.Name}\""
-    @set "modDescription=\"{modItem.Description.Description}\""
-    @set "modAuthor=\"{modItem.Description.Author}\""
+    @set "modName=\"{modItem.Description.Name.Resolve()}\""
+    @set "modDescription=\"{modItem.Description.Description.Resolve()}\""
+    @set "modAuthor=\"{modItem.Description.Author.Resolve()}\""
     @set "modVersion=\"{modItem.Description.Version}\""
     @set "nextScenario=\"{modItem.Description.Enter}\""
     @goto .GoToModScript
@@ -370,11 +389,11 @@ $"""
                     choice_index = 0;
                 }
 
-                choice_list += "@choice \"" + item.Value.Description.Name + "\" Lock:false play:true show:true" + "\n";
+                choice_list += "@choice \"" + item.Value.Description.Name.Resolve() + "\" Lock:false play:true show:true" + "\n";
                 choice_list += "    @set \"modKey=\\\"" + item.Key + "\\\"\"" + "\n";
-                choice_list += "    @set \"modName=\\\"" + item.Value.Description.Name + "\\\"\"" + "\n";
-                choice_list += "    @set \"modDescription=\\\"" + item.Value.Description.Description + "\\\"\"" + "\n";
-                choice_list += "    @set \"modAuthor=\\\"" + item.Value.Description.Author + "\\\"\"" + "\n";
+                choice_list += "    @set \"modName=\\\"" + item.Value.Description.Name.Resolve() + "\\\"\"" + "\n";
+                choice_list += "    @set \"modDescription=\\\"" + item.Value.Description.Description.Resolve() + "\\\"\"" + "\n";
+                choice_list += "    @set \"modAuthor=\\\"" + item.Value.Description.Author.Resolve() + "\\\"\"" + "\n";
                 choice_list += "    @set \"modVersion=\\\"" + item.Value.Description.Version + "\\\"\"" + "\n";
                 choice_list += "    @set \"nextScenario=\\\"" + item.Value.Description.Enter + "\\\"\"" + "\n";
                 choice_list += "    @goto .GoToModScript" + "\n";
