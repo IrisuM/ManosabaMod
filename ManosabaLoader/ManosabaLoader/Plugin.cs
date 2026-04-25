@@ -274,6 +274,24 @@ namespace ManosabaLoader
             ModAudioPatch.AudioLogError = msg => { Log.LogError(string.Format("[AudioPatch]\t{0}", msg)); };
             ModAudioPatch.Init(harmony);
 
+            ModChoiceHandlerLoader.HandlerLogMessage = msg => { Log.LogMessage(string.Format("[ChoiceHandlerLoader]\t{0}", msg)); };
+            ModChoiceHandlerLoader.HandlerLogInfo = msg => { Log.LogInfo(string.Format("[ChoiceHandlerLoader]\t{0}", msg)); };
+            ModChoiceHandlerLoader.HandlerLogDebug = msg => { Log.LogDebug(string.Format("[ChoiceHandlerLoader]\t{0}", msg)); };
+            ModChoiceHandlerLoader.HandlerLogWarning = msg => { Log.LogWarning(string.Format("[ChoiceHandlerLoader]\t{0}", msg)); };
+            ModChoiceHandlerLoader.HandlerLogError = msg => { Log.LogError(string.Format("[ChoiceHandlerLoader]\t{0}", msg)); };
+
+            ModObjectionCutInLoader.CutInLogMessage = msg => { Log.LogMessage(string.Format("[CutInLoader]\t{0}", msg)); };
+            ModObjectionCutInLoader.CutInLogInfo = msg => { Log.LogInfo(string.Format("[CutInLoader]\t{0}", msg)); };
+            ModObjectionCutInLoader.CutInLogDebug = msg => { Log.LogDebug(string.Format("[CutInLoader]\t{0}", msg)); };
+            ModObjectionCutInLoader.CutInLogWarning = msg => { Log.LogWarning(string.Format("[CutInLoader]\t{0}", msg)); };
+            ModObjectionCutInLoader.CutInLogError = msg => { Log.LogError(string.Format("[CutInLoader]\t{0}", msg)); };
+
+            // ModChoiceHandlerWatcherComponent 是 IL2CPP MonoBehaviour，必须在 AddComponent 之前注册。
+            ClassInjector.RegisterTypeInIl2Cpp<ModChoiceHandlerWatcherComponent>();
+            ModChoiceHandlerLoader.Init(harmony);
+
+            ModObjectionCutInLoader.Init(harmony);
+
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
 
             //调试用组件
