@@ -29,14 +29,14 @@ namespace ManosabaLoader
     ///                                               "ObjectionCutIn_&lt;Kind&gt;")
     ///      然后再 gosub 到子例程做 @spawn。我们 Postfix 这个 SetVariableValue，
     ///      若 &lt;Kind&gt; 命中已注册 mod ID：
-    ///        - 暂存 mod 条目（pendingModSwap）；
+    ///        - 暂存 mod 条目（pendingEntry）；
     ///        - 用同一 manager 重新 SetVariableValue 把变量值改写为
     ///          "ObjectionCutIn_Hiro"，让原版 spawn 流程拿到现成的 Hiro prefab。
     ///      （重入由 insideRewrite 标志保护；ExtractKindFromCutInValue 同时兼容
     ///        裸 Kind 与带 "CutIn/" 前缀两种形式以防变量格式变化）
     ///   2. 在 ObjectionCutIn.SetSpawnParameters 的 Postfix 中（同步方法），
-    ///      若 pendingModSwap 非空，按 sprite 名称替换该实例上的 Image / SpriteRenderer，
-    ///      然后清空 pendingModSwap。
+    ///      若 pendingEntry 非空，按 sprite 名称替换该实例上的 Image / SpriteRenderer，
+    ///      然后清空 pendingEntry。
     ///
     /// 完全避开 UniTask 方法，与 ModClueLoader.SpawnableClueSpawn_Patch 同模式：
     /// 通过同步方法的 Postfix 在 Naninovel spawn 流程中介入。
@@ -46,6 +46,23 @@ namespace ManosabaLoader
     /// - 无 prefab 克隆 / 无 watcher / 无每帧轮询
     /// - 无私有字段反射
     /// - 复用原版动画时间轴和 per-index 可见性切换
+    ///
+    /// ===== 性能优化（2026-04） =====
+    ///
+    /// 原始实现每次 spawn 做 7 次 GetComponentsInChildren 全树扫描，
+    /// 加上每次 spawn 重新解析 entry.Shaders 的 HTML 颜色 / 可空浮点。
+    /// 优化后：
+    /// - **Texture 预加载**：Awake() 时同步读盘 + 解码所有已注册 mod sprite 的 Texture2D，
+    ///   避免首次 swap 时同步阻塞 cut-in 帧。
+    /// - **ResolvedShaders 预烘焙**：Awake() 时把 entry.Shaders 解析成 5 个 per-role
+    ///   MaterialPropertyBlock 实例（null = 该 role 无覆盖）。运行时只需 SetPropertyBlock。
+    /// - **InstanceCache 复用**：Naninovel 通过 GetOrSpawnAsync 复用同一 ObjectionCutIn 实例。
+    ///   首次见到该实例时一次性扫描 Image / SpriteRenderer，并按 shader 名分桶；
+    ///   后续 spawn 直接迭代缓存，0 次 GetComponentsInChildren。
+    /// - **Per-instance dirty mask**：5 个 shader role 的 dirty 状态从静态全局
+    ///   迁移到 InstanceCache 里，更精确（按实例独立追踪）。
+    /// - **DumpReplaceableLayers 仅在 isDebug 时运行**：诊断功能默认关闭，
+    ///   mod 作者通过 BepInEx config Debug.OpenDebug = true 启用。
     ///
     /// ===== Mod 作者使用注意 =====
     ///
@@ -68,8 +85,9 @@ namespace ManosabaLoader
     ///      （保留 per-Index 表情效果，最接近原版手感）；
     ///   2. 或者三个槽位都填同一张 mod 图（视觉干净但失去 per-Index 表达力）。
     ///
-    /// 第一次触发 mod cut-in 时 loader 会把当前 ObjectionCutIn 实例上所有可替换
-    /// sprite 名打印到 BepInEx 日志，作为 Sprites 字典 key 的一手参考。
+    /// 启用 BepInEx config Debug.OpenDebug = true 后，第一次触发 mod cut-in 时
+    /// loader 会把当前 ObjectionCutIn 实例上所有可替换 sprite 名打印到 BepInEx 日志，
+    /// 作为 Sprites 字典 key 的一手参考。
     ///
     /// ===== Shader 参数覆盖 (Shaders) =====
     ///
@@ -86,8 +104,8 @@ namespace ManosabaLoader
     /// shader 属性。MPB 不实例化材质，未覆盖的属性自动落到 sharedMaterial 默认值，
     /// 所以 mod 只需声明想改的字段即可，其余保持角色专属默认。
     ///
-    /// 状态机（每个 shader role 独立）：
-    ///   - mod cut-in 且对应 sub-config 含任意非空字段 → 构建 MPB 写入 SetPropertyBlock
+    /// 状态机（每个 shader role 独立，**按 ObjectionCutIn 实例独立追踪**）：
+    ///   - mod cut-in 且对应 sub-config 含任意非空字段 → 用预烘焙 MPB 调用 SetPropertyBlock
     ///   - 任何其它 cut-in（含 vanilla）→ 若上次置过覆盖，则 SetPropertyBlock(null)
     ///     恢复 sharedMaterial 默认（角色原色）。
     ///
@@ -111,37 +129,79 @@ namespace ManosabaLoader
         /// <summary>原版 GosubToObjectionCutIn 在 Execute 中写入的脚本变量名。</summary>
         private const string ObjectionCutInSpawnPathVar = "objectionCutInSpawnPath";
 
-        /// <summary>已注册的 mod cut-in：ID → 配置。</summary>
-        private static readonly Dictionary<string, ModItem.ModObjectionCutIn> registry = new();
+        /// <summary>Shader role 索引（用于 ResolvedShaders.Roles[] / InstanceCache.RenderersByRole[] / AppliedRoles[]）。</summary>
+        private const int RoleBackground       = 0;
+        private const int RoleStainedGlass     = 1;
+        private const int RoleStainedGlassGlow = 2;
+        private const int RoleCharShadow       = 3;
+        private const int RoleCharGlow         = 4;
+        private const int ShaderRoleCount      = 5;
 
-        /// <summary>每个 mod 条目的 mod 根目录（用于解析相对图片路径）。</summary>
-        private static readonly Dictionary<string, string> modRootById = new();
+        /// <summary>Shader 名常量（与 SpriteRenderer.sharedMaterial.shader.name 匹配）。</summary>
+        private const string ShaderBackground        = "Shader Graphs/Background_0Fix";
+        private const string ShaderGlasses           = "Shader Graphs/Glasses_0Fix";
+        private const string ShaderGlassLuminescence = "Shader Graphs/Iuminescence_dezolve_0Fix";
+        private const string ShaderCharShadow        = "Shader Graphs/Shadow_Fix";
+        private const string ShaderCharLuminescence  = "Shader Graphs/Iuminescence_Silhouette_0Fix";
 
-        /// <summary>(modId, vanillaSpriteName) → mod sprite 缓存。</summary>
+        private static readonly string[] RoleShaderNames =
+        {
+            ShaderBackground, ShaderGlasses, ShaderGlassLuminescence, ShaderCharShadow, ShaderCharLuminescence
+        };
+
+        private static readonly string[] RoleNames =
+        {
+            "Background", "StainedGlass", "StainedGlassGlow", "CharacterShadow", "CharacterGlow"
+        };
+
+        /// <summary>已注册的 mod cut-in：ID → 条目 + mod 根 + 预烘焙 shader MPB。</summary>
+        private sealed class RegistryEntry
+        {
+            public ModItem.ModObjectionCutIn Entry;
+            public string ModRoot;
+            public ResolvedShaders Resolved;
+        }
+
+        /// <summary>预烘焙的 shader 覆盖。每个 role 一个 MPB（null = 无覆盖）。</summary>
+        private sealed class ResolvedShaders
+        {
+            public readonly MaterialPropertyBlock[] Roles = new MaterialPropertyBlock[ShaderRoleCount];
+        }
+
+        /// <summary>
+        /// 每个 ObjectionCutIn 实例的组件缓存。Naninovel 通过 GetOrSpawnAsync 复用
+        /// 同一实例，所以 prefab 子树稳定，缓存可长期持有。
+        /// </summary>
+        private sealed class InstanceCache
+        {
+            public List<Image> Images = new();
+            public List<string> ImageVanillaNames = new();
+            public List<SpriteRenderer> Sprites = new();
+            public List<string> SpriteVanillaNames = new();
+            public List<SpriteRenderer>[] RenderersByRole = new List<SpriteRenderer>[ShaderRoleCount];
+            /// <summary>该实例上每个 role 是否曾被 mod 覆盖（用于回滚到 vanilla）。</summary>
+            public bool[] AppliedRoles = new bool[ShaderRoleCount];
+        }
+
+        private static readonly Dictionary<string, RegistryEntry> registry = new();
+
+        /// <summary>Awake 时预加载的 (modId, vanillaName) → Texture2D。</summary>
+        private static readonly Dictionary<(string, string), Texture2D> textureCache = new();
+
+        /// <summary>(modId, vanillaSpriteName) → Sprite 缓存（首次 swap 时基于 vanilla pivot/PPU 创建）。</summary>
         private static readonly Dictionary<(string, string), Sprite> spriteCache = new();
 
+        /// <summary>每个 ObjectionCutIn GameObject InstanceID → 组件缓存。</summary>
+        private static readonly Dictionary<int, InstanceCache> instanceCaches = new();
+
         /// <summary>暂存：上次 SetVariableValue 命中的 mod 条目，供 SetSpawnParameters Postfix 消费。</summary>
-        private static ModItem.ModObjectionCutIn pendingModSwap = null;
+        private static RegistryEntry pendingEntry = null;
 
         /// <summary>SetVariableValue 重入保护：避免我们自己的 mgr.SetVariableValue 调用再次进入本 Postfix 逻辑。</summary>
         private static bool insideRewrite = false;
 
-        /// <summary>是否已 dump 过克隆图层（仅在第一次替换时打印一次）。</summary>
+        /// <summary>是否已 dump 过克隆图层（仅在第一次替换时打印一次，且仅 isDebug 时）。</summary>
         private static bool layersDumped = false;
-
-        /// <summary>每个 shader role 是否曾设置过 PropertyBlock 覆盖。
-        /// 用于后续非 mod cut-in 中清空 PropertyBlock 恢复 vanilla 状态。</summary>
-        private static bool bgDirty, glassDirty, glassGlowDirty, charShadowDirty, charGlowDirty;
-
-        /// <summary>缓存的 MaterialPropertyBlock（避免每帧分配）。</summary>
-        private static MaterialPropertyBlock cachedMpb = null;
-
-        /// <summary>Shader 名常量（与 SpriteRenderer.sharedMaterial.shader.name 匹配）。</summary>
-        private const string ShaderBackground       = "Shader Graphs/Background_0Fix";
-        private const string ShaderGlasses          = "Shader Graphs/Glasses_0Fix";
-        private const string ShaderGlassLuminescence = "Shader Graphs/Iuminescence_dezolve_0Fix";
-        private const string ShaderCharShadow       = "Shader Graphs/Shadow_Fix";
-        private const string ShaderCharLuminescence = "Shader Graphs/Iuminescence_Silhouette_0Fix";
 
         public static void Init(Harmony harmony)
         {
@@ -152,13 +212,15 @@ namespace ManosabaLoader
         }
 
         /// <summary>
-        /// TitleUi.Awake 后调用：扫描所有 mod 的 CutIns 条目并填充注册表。
+        /// TitleUi.Awake 后调用：扫描所有 mod 的 CutIns 条目，预加载 Texture2D，
+        /// 预烘焙 ResolvedShaders。
         /// </summary>
         public static void Awake()
         {
             registry.Clear();
-            modRootById.Clear();
-            // 不清 spriteCache：跨 mod 切换时已解析的 sprite 仍然有效（key 包含 modId）
+            // textureCache / spriteCache 不清：跨 mod 切换时已解析的资源仍然有效（key 包含 modId）
+            // instanceCaches 必须清：Title→Trial 间 ObjectionCutIn GameObject 已销毁，旧 InstanceID 失效
+            instanceCaches.Clear();
 
             int count = 0;
             foreach (var kv in ModManager.ModManager.Items)
@@ -168,15 +230,7 @@ namespace ManosabaLoader
                 string modRoot = Path.Combine(Plugin.Instance.ModRootPath, kv.Key);
                 foreach (var entry in desc.CutIns)
                 {
-                    if (entry == null || string.IsNullOrEmpty(entry.Id)) continue;
-                    if (!string.Equals(entry.BaseTemplate, HiroTemplate, StringComparison.OrdinalIgnoreCase))
-                    {
-                        CutInLogWarning($"Cut-in '{entry.Id}' uses unsupported BaseTemplate '{entry.BaseTemplate}'; v1 only supports 'Hiro'. Skipping.");
-                        continue;
-                    }
-                    registry[entry.Id] = entry;
-                    modRootById[entry.Id] = modRoot;
-                    count++;
+                    if (RegisterEntry(entry, modRoot)) count++;
                 }
             }
 
@@ -184,30 +238,182 @@ namespace ManosabaLoader
             {
                 foreach (var entry in ScriptWorkingManager.ModInfo.Description.CutIns)
                 {
-                    if (entry == null || string.IsNullOrEmpty(entry.Id)) continue;
-                    if (!string.Equals(entry.BaseTemplate, HiroTemplate, StringComparison.OrdinalIgnoreCase))
-                    {
-                        CutInLogWarning($"Workspace cut-in '{entry.Id}' uses unsupported BaseTemplate '{entry.BaseTemplate}'; skipping.");
-                        continue;
-                    }
-                    registry[entry.Id] = entry;
-                    modRootById[entry.Id] = ScriptWorkingManager.WorkspacePath;
-                    count++;
+                    if (RegisterEntry(entry, ScriptWorkingManager.WorkspacePath)) count++;
                 }
             }
 
             // 进入 Title 时清空暂存，避免上一局残留状态
-            pendingModSwap = null;
+            pendingEntry = null;
             insideRewrite = false;
             // 重置 layersDumped，让每次 Title→Trial 都能拿到一份新的诊断 dump
             layersDumped = false;
-            // 重置所有 shader dirty 标志（Title→Trial 间没有 ObjectionCutIn 实例存活）
-            bgDirty = glassDirty = glassGlowDirty = charShadowDirty = charGlowDirty = false;
 
             if (count == 0)
                 CutInLogDebug("No mod cut-ins configured; hijack patches inactive.");
             else
                 CutInLogInfo($"Registered {count} mod cut-in(s). Will hijack via SetVariableValue at runtime.");
+        }
+
+        private static bool RegisterEntry(ModItem.ModObjectionCutIn entry, string modRoot)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.Id)) return false;
+            if (!string.Equals(entry.BaseTemplate, HiroTemplate, StringComparison.OrdinalIgnoreCase))
+            {
+                CutInLogWarning($"Cut-in '{entry.Id}' uses unsupported BaseTemplate '{entry.BaseTemplate}'; v1 only supports 'Hiro'. Skipping.");
+                return false;
+            }
+
+            var reg = new RegistryEntry
+            {
+                Entry = entry,
+                ModRoot = modRoot,
+                Resolved = BuildResolvedShaders(entry),
+            };
+            registry[entry.Id] = reg;
+
+            PreloadTextures(entry.Id, modRoot, entry);
+            return true;
+        }
+
+        /// <summary>
+        /// 把 entry.Shaders 解析成 5 个 per-role MaterialPropertyBlock。
+        /// 颜色解析失败 / 字段全空 → 该 role 留 null（运行时不施加覆盖）。
+        /// </summary>
+        private static ResolvedShaders BuildResolvedShaders(ModItem.ModObjectionCutIn entry)
+        {
+            var resolved = new ResolvedShaders();
+            var sh = entry.Shaders;
+            if (sh == null) return resolved;
+
+            // Background_0Fix
+            if (sh.Background != null)
+            {
+                var cfg = sh.Background;
+                MaterialPropertyBlock mpb = null;
+                if (TryAddColor(ref mpb, "_BackgroundA", cfg.PrimaryColor,   entry.Id, "Background.PrimaryColor"))   { }
+                if (TryAddColor(ref mpb, "_BackgroundB", cfg.SecondaryColor, entry.Id, "Background.SecondaryColor")) { }
+                if (cfg.BlendFactor.HasValue)
+                {
+                    mpb ??= new MaterialPropertyBlock();
+                    mpb.SetFloat("_Float", cfg.BlendFactor.Value);
+                }
+                resolved.Roles[RoleBackground] = mpb;
+            }
+
+            // Glasses_0Fix
+            if (sh.StainedGlass != null)
+            {
+                var cfg = sh.StainedGlass;
+                MaterialPropertyBlock mpb = null;
+                TryAddColor(ref mpb, "_EclipseFlame", cfg.FlameColor, entry.Id, "StainedGlass.FlameColor");
+                AddFloat(ref mpb, "_Fader",    cfg.Fader);
+                AddFloat(ref mpb, "_Fader2",   cfg.Fader2);
+                AddFloat(ref mpb, "_Speed",    cfg.Speed);
+                AddFloat(ref mpb, "_Tick",     cfg.Tick);
+                AddFloat(ref mpb, "_EdgeSize", cfg.EdgeSize);
+                resolved.Roles[RoleStainedGlass] = mpb;
+            }
+
+            // Iuminescence_dezolve_0Fix
+            if (sh.StainedGlassGlow != null)
+            {
+                var cfg = sh.StainedGlassGlow;
+                MaterialPropertyBlock mpb = null;
+                TryAddColor(ref mpb, "_Color",        cfg.Color,      entry.Id, "StainedGlassGlow.Color");
+                TryAddColor(ref mpb, "_EclipseFlame", cfg.FlameColor, entry.Id, "StainedGlassGlow.FlameColor");
+                AddFloat(ref mpb, "_Tick", cfg.Tick);
+                resolved.Roles[RoleStainedGlassGlow] = mpb;
+            }
+
+            // Shadow_Fix
+            if (sh.CharacterShadow != null)
+            {
+                var cfg = sh.CharacterShadow;
+                MaterialPropertyBlock mpb = null;
+                TryAddColor(ref mpb, "_Color", cfg.Color, entry.Id, "CharacterShadow.Color");
+                resolved.Roles[RoleCharShadow] = mpb;
+            }
+
+            // Iuminescence_Silhouette_0Fix
+            if (sh.CharacterGlow != null)
+            {
+                var cfg = sh.CharacterGlow;
+                MaterialPropertyBlock mpb = null;
+                TryAddColor(ref mpb, "_Color", cfg.Color, entry.Id, "CharacterGlow.Color");
+                AddFloat(ref mpb, "_Tick", cfg.Tick);
+                resolved.Roles[RoleCharGlow] = mpb;
+            }
+
+            return resolved;
+        }
+
+        /// <summary>解析并写入颜色。空字符串 = 跳过（不算错误）；非空但解析失败 = 警告。</summary>
+        private static bool TryAddColor(ref MaterialPropertyBlock mpb, string property, string raw, string entryId, string fieldName)
+        {
+            if (string.IsNullOrEmpty(raw)) return false;
+            if (!TryParseHtmlColor(raw, out var color))
+            {
+                CutInLogWarning($"Cut-in '{entryId}' {fieldName}: invalid color '{raw}', ignored.");
+                return false;
+            }
+            mpb ??= new MaterialPropertyBlock();
+            mpb.SetColor(property, color);
+            return true;
+        }
+
+        private static void AddFloat(ref MaterialPropertyBlock mpb, string property, float? value)
+        {
+            if (!value.HasValue) return;
+            mpb ??= new MaterialPropertyBlock();
+            mpb.SetFloat(property, value.Value);
+        }
+
+        /// <summary>
+        /// Awake 时预加载 entry.Sprites 中所有图片为 Texture2D。
+        /// 把 file IO + 解码移出 cut-in 帧。Sprite.Create 仍延迟到首次 swap（需要 vanilla pivot/PPU）。
+        /// </summary>
+        private static void PreloadTextures(string modId, string modRoot, ModItem.ModObjectionCutIn entry)
+        {
+            if (entry.Sprites == null || entry.Sprites.Count == 0) return;
+            if (string.IsNullOrEmpty(modRoot))
+            {
+                CutInLogWarning($"Cut-in '{modId}': mod root empty; cannot preload sprites.");
+                return;
+            }
+
+            foreach (var pair in entry.Sprites)
+            {
+                string vanillaName = pair.Key;
+                string relPath = pair.Value;
+                var key = (modId, vanillaName);
+                if (textureCache.ContainsKey(key)) continue;
+
+                string fullPath = Path.Combine(modRoot, relPath ?? "");
+                if (!File.Exists(fullPath))
+                {
+                    CutInLogWarning($"Cut-in '{modId}': sprite file not found for vanilla '{vanillaName}': {fullPath}");
+                    continue;
+                }
+
+                try
+                {
+                    var bytes = File.ReadAllBytes(fullPath);
+                    var tex = new Texture2D(2, 2);
+                    if (!ImageConversion.LoadImage(tex, bytes))
+                    {
+                        CutInLogError($"Cut-in '{modId}': failed to decode '{vanillaName}': {fullPath}");
+                        UnityEngine.Object.Destroy(tex);
+                        continue;
+                    }
+                    tex.name = $"ModCutIn_{modId}_{vanillaName}";
+                    tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                    textureCache[key] = tex;
+                }
+                catch (Exception ex)
+                {
+                    CutInLogError($"Cut-in '{modId}': sprite preload error for '{vanillaName}': {ex}");
+                }
+            }
         }
 
         /// <summary>
@@ -234,26 +440,26 @@ namespace ManosabaLoader
                 string val = value.String;
                 if (string.IsNullOrEmpty(val))
                 {
-                    pendingModSwap = null;
+                    pendingEntry = null;
                     return;
                 }
 
                 string kind = ExtractKindFromCutInValue(val);
                 if (string.IsNullOrEmpty(kind))
                 {
-                    pendingModSwap = null;
+                    pendingEntry = null;
                     return;
                 }
 
-                if (!registry.TryGetValue(kind, out var entry))
+                if (!registry.TryGetValue(kind, out var reg))
                 {
                     // 原生模板（Hiro / Ema / CreatureHiro）：清空残留暂存
-                    pendingModSwap = null;
+                    pendingEntry = null;
                     return;
                 }
 
                 // 命中 mod ID：暂存条目并把变量值改写为 Hiro 等价形式
-                pendingModSwap = entry;
+                pendingEntry = reg;
                 string newVal = val.Replace(kind, HiroTemplate);
                 insideRewrite = true;
                 try
@@ -269,7 +475,7 @@ namespace ManosabaLoader
             catch (Exception ex)
             {
                 CutInLogError($"HandleSetVariableValuePostfix failed: {ex}");
-                pendingModSwap = null;
+                pendingEntry = null;
                 insideRewrite = false;
             }
         }
@@ -293,167 +499,59 @@ namespace ManosabaLoader
 
         /// <summary>
         /// 在 ObjectionCutIn.SetSpawnParameters Postfix 调用：
-        ///   - mod cut-in 时替换 sprite + 第一次 spawn 时 dump 图层（诊断）
-        ///   - 任何 cut-in 都根据 entry 状态更新 5 个 shader role 的 PropertyBlock 覆盖 / 回滚
+        ///   - 取/建该实例的 InstanceCache（一次性扫描，后续复用）
+        ///   - mod cut-in 时：按缓存替换 sprite + 第一次 spawn 时 dump 图层（仅 isDebug）
+        ///   - 任何 cut-in：根据 entry 状态更新 5 个 shader role 的 PropertyBlock 覆盖 / 回滚
         /// </summary>
         internal static void HandleSetSpawnParametersPostfix(ObjectionCutIn instance)
         {
-            var entry = pendingModSwap;
-            pendingModSwap = null;
+            var reg = pendingEntry;
+            pendingEntry = null;
             if (instance == null || instance.gameObject == null) return;
 
             try
             {
-                // mod 专属：sprite 替换 + 第一次 dump
-                if (entry != null)
+                int instId = instance.gameObject.GetInstanceID();
+                if (!instanceCaches.TryGetValue(instId, out var cache))
                 {
-                    if (!layersDumped)
+                    cache = BuildInstanceCache(instance.gameObject);
+                    instanceCaches[instId] = cache;
+                }
+
+                // mod 专属：sprite 替换 + 第一次 dump
+                if (reg != null)
+                {
+                    int swapped = SwapSpritesFromCache(cache, reg);
+                    CutInLogDebug($"Cut-in '{reg.Entry.Id}': swapped {swapped} sprite(s).");
+
+                    if (!layersDumped && Plugin.Instance != null && Plugin.Instance.isDebug)
                     {
-                        DumpReplaceableLayers(instance.gameObject);
                         layersDumped = true;
+                        DumpReplaceableLayers(instance.gameObject, cache);
                     }
-                    int swapped = SwapSprites(instance.gameObject, entry);
-                    CutInLogDebug($"Cut-in '{entry.Id}': swapped {swapped} sprite(s).");
                 }
 
                 // 始终运行：根据 entry 决定各 shader role 的覆盖 / 回滚
-                ApplyAllShaderOverrides(instance.gameObject, entry);
+                ApplyShaderOverridesFromCache(cache, reg?.Resolved);
             }
             catch (Exception ex)
             {
-                CutInLogError($"HandleSetSpawnParametersPostfix failed for '{entry?.Id ?? "<vanilla>"}': {ex}");
+                CutInLogError($"HandleSetSpawnParametersPostfix failed for '{reg?.Entry?.Id ?? "<vanilla>"}': {ex}");
             }
         }
 
         /// <summary>
-        /// 根据 entry.Shaders 决定五个 shader role 的覆盖 / 回滚。
-        /// 每个 role 独立追踪 dirty 状态，互不影响。
+        /// 一次性扫描该 ObjectionCutIn 实例的子树，缓存：
+        ///   - 所有有非空 sprite 名的 Image / SpriteRenderer（潜在 swap 目标）
+        ///   - 按 shader 名分桶的 SpriteRenderer（潜在 shader-override 目标）
         /// </summary>
-        private static void ApplyAllShaderOverrides(GameObject root, ModItem.ModObjectionCutIn entry)
+        private static InstanceCache BuildInstanceCache(GameObject root)
         {
-            var sh = entry?.Shaders;
-
-            // Background_0Fix
-            ApplyShaderRole(root, ShaderBackground, ref bgDirty, "Background", sh?.Background, (cfg, mpb) =>
+            var cache = new InstanceCache();
+            for (int i = 0; i < ShaderRoleCount; i++)
             {
-                if (TryParse(cfg.PrimaryColor,   out var c1)) mpb.SetColor("_BackgroundA", c1);
-                if (TryParse(cfg.SecondaryColor, out var c2)) mpb.SetColor("_BackgroundB", c2);
-                if (cfg.BlendFactor.HasValue)                 mpb.SetFloat("_Float",       cfg.BlendFactor.Value);
-            }, cfg => HasAny(cfg.PrimaryColor, cfg.SecondaryColor) || cfg.BlendFactor.HasValue);
-
-            // Glasses_0Fix
-            ApplyShaderRole(root, ShaderGlasses, ref glassDirty, "StainedGlass", sh?.StainedGlass, (cfg, mpb) =>
-            {
-                if (TryParse(cfg.FlameColor, out var c)) mpb.SetColor("_EclipseFlame", c);
-                if (cfg.Fader.HasValue)    mpb.SetFloat("_Fader",    cfg.Fader.Value);
-                if (cfg.Fader2.HasValue)   mpb.SetFloat("_Fader2",   cfg.Fader2.Value);
-                if (cfg.Speed.HasValue)    mpb.SetFloat("_Speed",    cfg.Speed.Value);
-                if (cfg.Tick.HasValue)     mpb.SetFloat("_Tick",     cfg.Tick.Value);
-                if (cfg.EdgeSize.HasValue) mpb.SetFloat("_EdgeSize", cfg.EdgeSize.Value);
-            }, cfg => HasAny(cfg.FlameColor) || cfg.Fader.HasValue || cfg.Fader2.HasValue
-                       || cfg.Speed.HasValue || cfg.Tick.HasValue || cfg.EdgeSize.HasValue);
-
-            // Iuminescence_dezolve_0Fix
-            ApplyShaderRole(root, ShaderGlassLuminescence, ref glassGlowDirty, "StainedGlassGlow", sh?.StainedGlassGlow, (cfg, mpb) =>
-            {
-                if (TryParse(cfg.Color,      out var c1)) mpb.SetColor("_Color",        c1);
-                if (TryParse(cfg.FlameColor, out var c2)) mpb.SetColor("_EclipseFlame", c2);
-                if (cfg.Tick.HasValue)                    mpb.SetFloat("_Tick",         cfg.Tick.Value);
-            }, cfg => HasAny(cfg.Color, cfg.FlameColor) || cfg.Tick.HasValue);
-
-            // Shadow_Fix
-            ApplyShaderRole(root, ShaderCharShadow, ref charShadowDirty, "CharacterShadow", sh?.CharacterShadow, (cfg, mpb) =>
-            {
-                if (TryParse(cfg.Color, out var c)) mpb.SetColor("_Color", c);
-            }, cfg => HasAny(cfg.Color));
-
-            // Iuminescence_Silhouette_0Fix
-            ApplyShaderRole(root, ShaderCharLuminescence, ref charGlowDirty, "CharacterGlow", sh?.CharacterGlow, (cfg, mpb) =>
-            {
-                if (TryParse(cfg.Color, out var c)) mpb.SetColor("_Color", c);
-                if (cfg.Tick.HasValue)              mpb.SetFloat("_Tick",  cfg.Tick.Value);
-            }, cfg => HasAny(cfg.Color) || cfg.Tick.HasValue);
-        }
-
-        private static bool HasAny(params string[] values)
-        {
-            if (values == null) return false;
-            foreach (var v in values) if (!string.IsNullOrEmpty(v)) return true;
-            return false;
-        }
-
-        private static bool TryParse(string raw, out Color color) => TryParseHtmlColor(raw, out color);
-
-        /// <summary>
-        /// 通用 shader role 应用 / 回滚：
-        ///   - cfg 非空且 hasAny(cfg) → 找 prefab 内所有 shader=targetShaderName 的 SpriteRenderer，
-        ///     构建 MPB，调用 writeProps(cfg, mpb) 写入想覆盖的字段，SetPropertyBlock(mpb)，dirty=true
-        ///   - 否则若 dirty=true → SetPropertyBlock(null) 恢复 sharedMaterial 默认，dirty=false
-        ///   - 否则 → no-op
-        /// </summary>
-        private static void ApplyShaderRole<TConfig>(
-            GameObject root,
-            string targetShaderName,
-            ref bool dirtyFlag,
-            string roleName,
-            TConfig cfg,
-            Action<TConfig, MaterialPropertyBlock> writeProps,
-            Func<TConfig, bool> hasAny)
-            where TConfig : class
-        {
-            bool hasOverride = cfg != null && hasAny(cfg);
-            if (!hasOverride && !dirtyFlag) return;
-
-            try
-            {
-                var renderers = root.GetComponentsInChildren<SpriteRenderer>(true);
-                if (renderers == null) return;
-
-                int affected = 0;
-                foreach (var sr in renderers)
-                {
-                    if (sr == null) continue;
-                    var mat = sr.sharedMaterial;
-                    if (mat == null || mat.shader == null) continue;
-                    if (mat.shader.name != targetShaderName) continue;
-
-                    if (hasOverride)
-                    {
-                        if (cachedMpb == null) cachedMpb = new MaterialPropertyBlock();
-                        cachedMpb.Clear();
-                        writeProps(cfg, cachedMpb);
-                        sr.SetPropertyBlock(cachedMpb);
-                    }
-                    else
-                    {
-                        sr.SetPropertyBlock(null);
-                    }
-                    affected++;
-                }
-
-                if (affected > 0)
-                {
-                    dirtyFlag = hasOverride;
-                    CutInLogDebug($"Shaders.{roleName}: {(hasOverride ? "applied" : "cleared")} on {affected} renderer(s).");
-                }
-                else
-                {
-                    CutInLogDebug($"Shaders.{roleName}: no SpriteRenderer with shader '{targetShaderName}' found; skipped.");
-                }
+                cache.RenderersByRole[i] = new List<SpriteRenderer>();
             }
-            catch (Exception ex)
-            {
-                CutInLogError($"Shaders.{roleName} apply failed: {ex}");
-            }
-        }
-
-        /// <summary>
-        /// 按 sprite 名称扫描并替换 Image / SpriteRenderer。返回成功替换数量。
-        /// </summary>
-        private static int SwapSprites(GameObject root, ModItem.ModObjectionCutIn entry)
-        {
-            int count = 0;
-            if (entry.Sprites == null || entry.Sprites.Count == 0) return 0;
 
             try
             {
@@ -465,14 +563,10 @@ namespace ManosabaLoader
                         if (img == null) continue;
                         var sp = img.sprite;
                         if (sp == null) continue;
-                        string name = sp.name ?? "";
-                        if (!entry.Sprites.TryGetValue(name, out var relPath)) continue;
-                        var newSprite = LoadOrGetSprite(entry.Id, name, relPath, sp);
-                        if (newSprite != null)
-                        {
-                            img.sprite = newSprite;
-                            count++;
-                        }
+                        string name = sp.name;
+                        if (string.IsNullOrEmpty(name)) continue;
+                        cache.Images.Add(img);
+                        cache.ImageVanillaNames.Add(name);
                     }
                 }
 
@@ -482,63 +576,103 @@ namespace ManosabaLoader
                     foreach (var sr in renderers)
                     {
                         if (sr == null) continue;
+
+                        // sprite swap 资格
                         var sp = sr.sprite;
-                        if (sp == null) continue;
-                        string name = sp.name ?? "";
-                        if (!entry.Sprites.TryGetValue(name, out var relPath)) continue;
-                        var newSprite = LoadOrGetSprite(entry.Id, name, relPath, sp);
-                        if (newSprite != null)
+                        if (sp != null && !string.IsNullOrEmpty(sp.name))
                         {
-                            sr.sprite = newSprite;
-                            count++;
+                            cache.Sprites.Add(sr);
+                            cache.SpriteVanillaNames.Add(sp.name);
                         }
+
+                        // shader role 分桶
+                        var mat = sr.sharedMaterial;
+                        if (mat == null || mat.shader == null) continue;
+                        int role = RoleForShaderName(mat.shader.name);
+                        if (role >= 0) cache.RenderersByRole[role].Add(sr);
                     }
                 }
             }
             catch (Exception ex)
             {
-                CutInLogError($"SwapSprites for '{entry.Id}' failed: {ex}");
+                CutInLogError($"BuildInstanceCache failed: {ex}");
+            }
+
+            return cache;
+        }
+
+        private static int RoleForShaderName(string name)
+        {
+            if (name == ShaderBackground)        return RoleBackground;
+            if (name == ShaderGlasses)           return RoleStainedGlass;
+            if (name == ShaderGlassLuminescence) return RoleStainedGlassGlow;
+            if (name == ShaderCharShadow)        return RoleCharShadow;
+            if (name == ShaderCharLuminescence)  return RoleCharGlow;
+            return -1;
+        }
+
+        /// <summary>
+        /// 按缓存的 Image / SpriteRenderer 列表替换 sprite。返回成功替换数量。
+        /// </summary>
+        private static int SwapSpritesFromCache(InstanceCache cache, RegistryEntry reg)
+        {
+            var entry = reg.Entry;
+            if (entry.Sprites == null || entry.Sprites.Count == 0) return 0;
+
+            int count = 0;
+            try
+            {
+                for (int i = 0; i < cache.Images.Count; i++)
+                {
+                    var img = cache.Images[i];
+                    if (img == null) continue;
+                    string name = cache.ImageVanillaNames[i];
+                    if (!entry.Sprites.TryGetValue(name, out _)) continue;
+                    var newSprite = GetOrCreateSprite(reg.Entry.Id, name, img.sprite);
+                    if (newSprite != null)
+                    {
+                        img.sprite = newSprite;
+                        count++;
+                    }
+                }
+
+                for (int i = 0; i < cache.Sprites.Count; i++)
+                {
+                    var sr = cache.Sprites[i];
+                    if (sr == null) continue;
+                    string name = cache.SpriteVanillaNames[i];
+                    if (!entry.Sprites.TryGetValue(name, out _)) continue;
+                    var newSprite = GetOrCreateSprite(reg.Entry.Id, name, sr.sprite);
+                    if (newSprite != null)
+                    {
+                        sr.sprite = newSprite;
+                        count++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                CutInLogError($"SwapSpritesFromCache for '{entry.Id}' failed: {ex}");
             }
             return count;
         }
 
         /// <summary>
-        /// 加载 / 缓存 mod sprite。复用原版 sprite 的 pivot 和 pixelsPerUnit。
+        /// 从预加载的 Texture2D 创建 / 取出缓存的 Sprite。复用 vanilla sprite 的 pivot 和 pixelsPerUnit。
         /// </summary>
-        private static Sprite LoadOrGetSprite(string modId, string vanillaName, string relPath, Sprite vanillaSprite)
+        private static Sprite GetOrCreateSprite(string modId, string vanillaName, Sprite vanillaSprite)
         {
             var key = (modId, vanillaName);
             if (spriteCache.TryGetValue(key, out var cached)) return cached;
 
-            if (!modRootById.TryGetValue(modId, out var modRoot) || string.IsNullOrEmpty(modRoot))
+            if (!textureCache.TryGetValue(key, out var tex) || tex == null)
             {
-                CutInLogWarning($"Cut-in '{modId}': mod root unknown; cannot load sprite '{vanillaName}'.");
-                spriteCache[key] = null;
-                return null;
-            }
-
-            string fullPath = Path.Combine(modRoot, relPath ?? "");
-            if (!File.Exists(fullPath))
-            {
-                CutInLogWarning($"Cut-in '{modId}': sprite file not found for vanilla '{vanillaName}': {fullPath}");
-                spriteCache[key] = null;
+                spriteCache[key] = null; // 已在 Awake 警告，这里不再刷屏
                 return null;
             }
 
             try
             {
-                var bytes = File.ReadAllBytes(fullPath);
-                var tex = new Texture2D(2, 2);
-                if (!ImageConversion.LoadImage(tex, bytes))
-                {
-                    CutInLogError($"Cut-in '{modId}': failed to decode '{vanillaName}': {fullPath}");
-                    UnityEngine.Object.Destroy(tex);
-                    spriteCache[key] = null;
-                    return null;
-                }
-                tex.name = $"ModCutIn_{modId}_{vanillaName}";
-                tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
-
                 var rect = vanillaSprite.rect;
                 var pivot = (rect.width > 0 && rect.height > 0)
                     ? vanillaSprite.pivot / new Vector2(rect.width, rect.height)
@@ -556,9 +690,53 @@ namespace ManosabaLoader
             }
             catch (Exception ex)
             {
-                CutInLogError($"Cut-in '{modId}': sprite load error for '{vanillaName}': {ex}");
+                CutInLogError($"Cut-in '{modId}': Sprite.Create failed for '{vanillaName}': {ex}");
                 spriteCache[key] = null;
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// 用预烘焙的 ResolvedShaders 应用 / 回滚 5 个 shader role。
+        /// 每个实例独立追踪 dirty，互不影响。
+        /// </summary>
+        private static void ApplyShaderOverridesFromCache(InstanceCache cache, ResolvedShaders resolved)
+        {
+            for (int role = 0; role < ShaderRoleCount; role++)
+            {
+                var mpb = resolved?.Roles[role];
+                bool hasOverride = mpb != null;
+                if (!hasOverride && !cache.AppliedRoles[role]) continue;
+
+                var renderers = cache.RenderersByRole[role];
+                if (renderers == null || renderers.Count == 0)
+                {
+                    CutInLogDebug($"Shaders.{RoleNames[role]}: no SpriteRenderer with shader '{RoleShaderNames[role]}' found; skipped.");
+                    continue;
+                }
+
+                int affected = 0;
+                try
+                {
+                    foreach (var sr in renderers)
+                    {
+                        if (sr == null) continue;
+                        if (hasOverride) sr.SetPropertyBlock(mpb);
+                        else             sr.SetPropertyBlock(null);
+                        affected++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CutInLogError($"Shaders.{RoleNames[role]} apply failed: {ex}");
+                    continue;
+                }
+
+                if (affected > 0)
+                {
+                    cache.AppliedRoles[role] = hasOverride;
+                    CutInLogDebug($"Shaders.{RoleNames[role]}: {(hasOverride ? "applied" : "cleared")} on {affected} renderer(s).");
+                }
             }
         }
 
@@ -576,75 +754,72 @@ namespace ManosabaLoader
         }
 
         /// <summary>
-        /// 列出实例上所有可替换 sprite 图层，便于 mod 作者参考 key。仅打印一次。
-        /// 同时打印每个 Image 的颜色 / 材质 / 主纹理，用于定位 "noise" 之类的色调叠加来源。
+        /// 列出实例上所有可替换 sprite 图层，便于 mod 作者参考 key。仅在 isDebug=true 时被调用，
+        /// 且每个 Title→Trial 周期只打印一次。复用 InstanceCache 避免重复 GetComponentsInChildren。
         /// </summary>
-        private static void DumpReplaceableLayers(GameObject root)
+        private static void DumpReplaceableLayers(GameObject root, InstanceCache cache)
         {
             try
             {
                 CutInLogInfo("First mod cut-in spawn — replaceable layers on this ObjectionCutIn instance:");
-                var images = root.GetComponentsInChildren<Image>(true);
-                if (images != null)
+
+                for (int i = 0; i < cache.Images.Count; i++)
                 {
-                    foreach (var img in images)
+                    var img = cache.Images[i];
+                    if (img == null) continue;
+                    string spriteName = img.sprite != null ? img.sprite.name : "<null>";
+                    var c = img.color;
+                    string colorHex = $"#{(byte)(c.r * 255):X2}{(byte)(c.g * 255):X2}{(byte)(c.b * 255):X2}{(byte)(c.a * 255):X2}";
+                    string matName = "<null>";
+                    string matTex = "<null>";
+                    try
                     {
-                        if (img == null) continue;
-                        string spriteName = img.sprite != null ? img.sprite.name : "<null>";
-                        var c = img.color;
-                        string colorHex = $"#{(byte)(c.r * 255):X2}{(byte)(c.g * 255):X2}{(byte)(c.b * 255):X2}{(byte)(c.a * 255):X2}";
-                        string matName = "<null>";
-                        string matTex = "<null>";
-                        try
+                        var mat = img.material;
+                        if (mat != null)
                         {
-                            var mat = img.material;
-                            if (mat != null)
+                            matName = mat.name ?? "?";
+                            if (mat.HasProperty("_MainTex"))
                             {
-                                matName = mat.name ?? "?";
-                                if (mat.HasProperty("_MainTex"))
-                                {
-                                    var t = mat.mainTexture;
-                                    matTex = t != null ? t.name : "<null>";
-                                }
+                                var t = mat.mainTexture;
+                                matTex = t != null ? t.name : "<null>";
                             }
                         }
-                        catch { /* material access can throw on default mats */ }
-                        CutInLogInfo($"  Image           {GetTransformPath(img.transform, root.transform)} -> sprite={spriteName} color={colorHex} mat={matName} tex={matTex}");
                     }
-                }
-                var renderers = root.GetComponentsInChildren<SpriteRenderer>(true);
-                if (renderers != null)
-                {
-                    foreach (var sr in renderers)
-                    {
-                        if (sr == null) continue;
-                        string spriteName = sr.sprite != null ? sr.sprite.name : "<null>";
-                        var c = sr.color;
-                        string colorHex = $"#{(byte)(c.r * 255):X2}{(byte)(c.g * 255):X2}{(byte)(c.b * 255):X2}{(byte)(c.a * 255):X2}";
-                        string matName = "<null>";
-                        string matShader = "<null>";
-                        string matTex = "<null>";
-                        try
-                        {
-                            // sharedMaterial 不会触发实例化，对诊断更安全
-                            var mat = sr.sharedMaterial;
-                            if (mat != null)
-                            {
-                                matName = mat.name ?? "?";
-                                if (mat.shader != null) matShader = mat.shader.name ?? "?";
-                                if (mat.HasProperty("_MainTex"))
-                                {
-                                    var t = mat.mainTexture;
-                                    matTex = t != null ? t.name : "<null>";
-                                }
-                            }
-                        }
-                        catch { /* ignore material access errors */ }
-                        CutInLogInfo($"  SpriteRenderer  {GetTransformPath(sr.transform, root.transform)} -> sprite={spriteName} color={colorHex} mat={matName} shader={matShader} tex={matTex}");
-                    }
+                    catch { /* material access can throw on default mats */ }
+                    CutInLogInfo($"  Image           {GetTransformPath(img.transform, root.transform)} -> sprite={spriteName} color={colorHex} mat={matName} tex={matTex}");
                 }
 
-                // 同时列出无 Image / SpriteRenderer 但有其它渲染组件的 GameObject（如 ParticleSystem / RawImage / 自定义 shader）
+                for (int i = 0; i < cache.Sprites.Count; i++)
+                {
+                    var sr = cache.Sprites[i];
+                    if (sr == null) continue;
+                    string spriteName = sr.sprite != null ? sr.sprite.name : "<null>";
+                    var c = sr.color;
+                    string colorHex = $"#{(byte)(c.r * 255):X2}{(byte)(c.g * 255):X2}{(byte)(c.b * 255):X2}{(byte)(c.a * 255):X2}";
+                    string matName = "<null>";
+                    string matShader = "<null>";
+                    string matTex = "<null>";
+                    try
+                    {
+                        // sharedMaterial 不会触发实例化，对诊断更安全
+                        var mat = sr.sharedMaterial;
+                        if (mat != null)
+                        {
+                            matName = mat.name ?? "?";
+                            if (mat.shader != null) matShader = mat.shader.name ?? "?";
+                            if (mat.HasProperty("_MainTex"))
+                            {
+                                var t = mat.mainTexture;
+                                matTex = t != null ? t.name : "<null>";
+                            }
+                        }
+                    }
+                    catch { /* ignore material access errors */ }
+                    CutInLogInfo($"  SpriteRenderer  {GetTransformPath(sr.transform, root.transform)} -> sprite={spriteName} color={colorHex} mat={matName} shader={matShader} tex={matTex}");
+                }
+
+                // 同时列出无 Image / SpriteRenderer 但有其它渲染组件的 GameObject（如 ParticleSystem / RawImage / 自定义 shader）。
+                // 这一步需要一次 Transform 全树扫描 + per-component IL2CPP 反射，但因为只在 isDebug + 每 Title→Trial 一次，可以接受。
                 var allTransforms = root.GetComponentsInChildren<Transform>(true);
                 if (allTransforms != null)
                 {
@@ -654,7 +829,6 @@ namespace ManosabaLoader
                         if (t.GetComponent<Image>() != null) continue;
                         if (t.GetComponent<SpriteRenderer>() != null) continue;
 
-                        // 报告其它感兴趣的组件名
                         var comps = t.GetComponents<Component>();
                         if (comps == null || comps.Length == 0) continue;
                         var interesting = new List<string>();
