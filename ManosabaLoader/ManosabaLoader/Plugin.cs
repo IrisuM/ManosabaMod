@@ -286,8 +286,6 @@ namespace ManosabaLoader
             ModObjectionCutInLoader.CutInLogWarning = msg => { Log.LogWarning(string.Format("[CutInLoader]\t{0}", msg)); };
             ModObjectionCutInLoader.CutInLogError = msg => { Log.LogError(string.Format("[CutInLoader]\t{0}", msg)); };
 
-            // ModChoiceHandlerWatcherComponent 是 IL2CPP MonoBehaviour，必须在 AddComponent 之前注册。
-            ClassInjector.RegisterTypeInIl2Cpp<ModChoiceHandlerWatcherComponent>();
             ModChoiceHandlerLoader.Init(harmony);
 
             ModObjectionCutInLoader.Init(harmony);

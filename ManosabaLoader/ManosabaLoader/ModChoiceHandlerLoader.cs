@@ -10,6 +10,7 @@ using ManosabaLoader.ModManager;
 using ManosabaLoader.Utils;
 
 using Naninovel;
+using Naninovel.UI;
 
 using UnityEngine;
 using UnityEngine.UI;
@@ -26,7 +27,14 @@ namespace ManosabaLoader
     /// 并向 ChoiceHandlersConfiguration.Metadata 添加新条目。
     ///
     /// IL2CPP 约束：仅依赖同步 API；不 patch 任何 UniTask 异步方法。
-    /// 由于源面板可能尚未加载，使用每帧轮询的 MonoBehaviour 延迟初始化。
+    ///
+    /// 生命周期与 ModClueLoader 等数据加载器对齐：
+    ///   - <see cref="LoadModData"/> 由 <c>ModResourceLoader.LoadSelectedModData</c> 按 mod 分发，
+    ///     收集条目并预加载 Sprite。
+    ///   - <see cref="TryFinalizeRegistration"/> 由 <see cref="TrialChoiceHandlerPanel_Awake_Patch"/>
+    ///     在源面板 Awake 时调用，执行克隆 + Metadata 注册（idempotent）。
+    ///   - <see cref="TryTriggerSourcePanelLoad"/> 由 <c>ModResourceLoader.Awake</c>
+    ///     （TitleUi.Awake 后）触发原版面板 fire-and-forget 加载。
     /// </summary>
     public static class ModChoiceHandlerLoader
     {
@@ -54,157 +62,123 @@ namespace ManosabaLoader
         /// <summary>是否已完成注册。</summary>
         private static bool registered = false;
 
+        /// <summary>
+        /// TryFinalizeRegistration 重入保护。
+        /// Instantiate 克隆面板会同步触发 cloned panel 的 Awake → 我们的 Postfix
+        /// → 再次进入 TryFinalizeRegistration。若不阻断会无限递归直到栈溢出崩溃。
+        /// </summary>
+        private static bool finalizing = false;
+
         public static void Init(Harmony harmony)
         {
-            // 仅一个补丁：在 TitleUi.Awake 后挂载延迟注册组件
-            harmony.PatchAll(typeof(ChoiceHandler_TitleUi_Patch));
-            HandlerLogInfo("ModChoiceHandlerLoader initialized.");
+            harmony.PatchAll(typeof(TrialChoiceHandlerPanel_Awake_Patch));
+            HandlerLogInfo("ModChoiceHandlerLoader patches applied.");
+        }
+
+        /// <summary>加载指定 mod 的 choice handler 条目并预加载立绘。</summary>
+        public static void LoadModData(string modKey, string modPath, ModItem modItem)
+        {
+            if (modItem?.Description?.ChoiceHandlers == null) return;
+
+            int added = 0;
+            foreach (var ch in modItem.Description.ChoiceHandlers)
+            {
+                if (ch == null || string.IsNullOrEmpty(ch.Id)) continue;
+                pendingHandlers.Add(ch);
+                LoadSprite(ch, modPath);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                HandlerLogMessage($"Loaded {added} mod choice handler(s) for mod: {modKey}");
+                // 触发原版源面板的 fire-and-forget 加载；面板 Awake 后由 Harmony patch 完成注册。
+                // 同时立刻尝试一次：若源面板恰好已驻留内存，无需等待 Awake 触发。
+                TryTriggerSourcePanelLoad();
+                TryFinalizeRegistration();
+            }
+        }
+
+        /// <summary>清除所有 mod handler 缓存（释放 Sprite 与 Texture）。</summary>
+        public static void ClearModData()
+        {
+            pendingHandlers.Clear();
+            registeredIds.Clear();
+            foreach (var sp in spriteCache.Values)
+            {
+                if (sp == null) continue;
+                var tex = sp.texture;
+                UnityEngine.Object.Destroy(sp);
+                if (tex != null) UnityEngine.Object.Destroy(tex);
+            }
+            spriteCache.Clear();
+            registered = false;
+            finalizing = false;
+            HandlerLogInfo("ChoiceHandlerLoader data cleared.");
         }
 
         /// <summary>
-        /// TitleUi.Awake 后调用：收集所有 mod 的 handler 条目并启动延迟注册。
+        /// 从磁盘加载单个 handler 的立绘并构建 Sprite 缓存。
+        /// 与 ModClueLoader.RegisterClueTextures 风格一致，使用直接传入的 modPath 而非反查。
         /// </summary>
-        public static void Awake()
+        private static void LoadSprite(ModItem.ModChoiceHandler entry, string modPath)
         {
-            if (registered) return;
-            CollectPendingHandlers();
-            if (pendingHandlers.Count == 0)
+            if (spriteCache.ContainsKey(entry.Id)) return;
+
+            if (string.IsNullOrEmpty(modPath))
             {
-                HandlerLogDebug("No mod choice handlers configured; skipping.");
+                HandlerLogWarning($"Empty mod path for handler '{entry.Id}'; skipping sprite load.");
                 return;
             }
 
-            HandlerLogInfo($"Found {pendingHandlers.Count} mod choice handler(s); waiting for source panels to load.");
+            string portraitPath = Path.Combine(modPath, entry.Portrait ?? "");
+            if (!File.Exists(portraitPath))
+            {
+                HandlerLogWarning($"Portrait file not found for handler '{entry.Id}': {portraitPath}");
+                return;
+            }
 
-            // 加载所有立绘到 Sprite 缓存
-            LoadAllSprites();
-
-            // 触发原版面板加载（异步、丢弃 UniTask）
-            TryTriggerSourcePanelLoad();
-
-            // 挂载每帧轮询组件
             try
             {
-                var component = Plugin.Instance.AddComponent<ModChoiceHandlerWatcherComponent>();
+                var bytes = File.ReadAllBytes(portraitPath);
+                var tex = new Texture2D(2, 2);
+                if (!ImageConversion.LoadImage(tex, bytes))
+                {
+                    HandlerLogError($"Failed to decode portrait image for handler '{entry.Id}': {portraitPath}");
+                    UnityEngine.Object.Destroy(tex);
+                    return;
+                }
+                tex.name = $"ModChoicePortrait_{entry.Id}";
+                tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+                // 使用与原版 ChoicePortrait_Hiro 相同的 pivot / pixelsPerUnit
+                var sprite = Sprite.Create(
+                    tex,
+                    new Rect(0, 0, tex.width, tex.height),
+                    new Vector2(0.31f, 0.5f),
+                    100f);
+                sprite.name = $"ModChoicePortrait_{entry.Id}";
+                sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+                spriteCache[entry.Id] = sprite;
+                HandlerLogDebug($"Loaded portrait for handler '{entry.Id}' ({tex.width}x{tex.height}).");
             }
             catch (Exception ex)
             {
-                HandlerLogError($"Failed to mount ModChoiceHandlerWatcherComponent: {ex}");
+                HandlerLogError($"Failed to load portrait for handler '{entry.Id}': {ex}");
             }
-        }
-
-        /// <summary>
-        /// 收集所有 mod（包括工作区）配置的 ChoiceHandlers。
-        /// </summary>
-        private static void CollectPendingHandlers()
-        {
-            pendingHandlers.Clear();
-
-            foreach (var mod in ModManager.ModManager.Items.Values)
-            {
-                if (mod?.Description?.ChoiceHandlers == null) continue;
-                foreach (var ch in mod.Description.ChoiceHandlers)
-                    if (!string.IsNullOrEmpty(ch?.Id))
-                        pendingHandlers.Add(ch);
-            }
-
-            if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo?.Description?.ChoiceHandlers != null)
-            {
-                foreach (var ch in ScriptWorkingManager.ModInfo.Description.ChoiceHandlers)
-                    if (!string.IsNullOrEmpty(ch?.Id))
-                        pendingHandlers.Add(ch);
-            }
-        }
-
-        /// <summary>
-        /// 从磁盘加载所有立绘并构建 Sprite 缓存。
-        /// </summary>
-        private static void LoadAllSprites()
-        {
-            foreach (var entry in pendingHandlers)
-            {
-                if (spriteCache.ContainsKey(entry.Id)) continue;
-
-                string modPath = ResolveModRootForHandler(entry);
-                if (string.IsNullOrEmpty(modPath))
-                {
-                    HandlerLogWarning($"Could not resolve mod root for handler '{entry.Id}'; skipping sprite load.");
-                    continue;
-                }
-
-                string portraitPath = Path.Combine(modPath, entry.Portrait ?? "");
-                if (!File.Exists(portraitPath))
-                {
-                    HandlerLogWarning($"Portrait file not found for handler '{entry.Id}': {portraitPath}");
-                    continue;
-                }
-
-                try
-                {
-                    var bytes = File.ReadAllBytes(portraitPath);
-                    var tex = new Texture2D(2, 2);
-                    if (!ImageConversion.LoadImage(tex, bytes))
-                    {
-                        HandlerLogError($"Failed to decode portrait image for handler '{entry.Id}': {portraitPath}");
-                        UnityEngine.Object.Destroy(tex);
-                        continue;
-                    }
-                    tex.name = $"ModChoicePortrait_{entry.Id}";
-                    tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
-
-                    // 使用与原版 ChoicePortrait_Hiro 相同的 pivot / pixelsPerUnit
-                    var sprite = Sprite.Create(
-                        tex,
-                        new Rect(0, 0, tex.width, tex.height),
-                        new Vector2(0.31f, 0.5f),
-                        100f);
-                    sprite.name = $"ModChoicePortrait_{entry.Id}";
-                    sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
-
-                    spriteCache[entry.Id] = sprite;
-                    HandlerLogDebug($"Loaded portrait for handler '{entry.Id}' ({tex.width}x{tex.height}).");
-                }
-                catch (Exception ex)
-                {
-                    HandlerLogError($"Failed to load portrait for handler '{entry.Id}': {ex}");
-                }
-            }
-        }
-
-        /// <summary>
-        /// 找到 handler 对应的 mod 目录。
-        /// 通过反查 ModManager.Items 找出包含此 ChoiceHandler 条目的 mod。
-        /// </summary>
-        private static string ResolveModRootForHandler(ModItem.ModChoiceHandler entry)
-        {
-            // 优先检查工作区
-            if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo?.Description?.ChoiceHandlers != null)
-            {
-                foreach (var ch in ScriptWorkingManager.ModInfo.Description.ChoiceHandlers)
-                {
-                    if (ReferenceEquals(ch, entry))
-                        return ScriptWorkingManager.WorkspacePath;
-                }
-            }
-
-            foreach (var kv in ModManager.ModManager.Items)
-            {
-                if (kv.Value?.Description?.ChoiceHandlers == null) continue;
-                foreach (var ch in kv.Value.Description.ChoiceHandlers)
-                {
-                    if (ReferenceEquals(ch, entry))
-                        return Path.Combine(Plugin.Instance.ModRootPath, kv.Key);
-                }
-            }
-            return null;
         }
 
         /// <summary>
         /// 触发原版 Trial / TrialHiro 面板加载。
         /// 仅 fire-and-forget；UniTask 不在主线程同步等待。
+        /// 由 ModResourceLoader.Awake（TitleUi.Awake 后）调用一次。
         /// </summary>
-        private static void TryTriggerSourcePanelLoad()
+        internal static void TryTriggerSourcePanelLoad()
         {
+            if (registered) return;
+            if (pendingHandlers.Count == 0) return;
+
             try
             {
                 var chMgr = Engine.GetServiceOrErr<ChoiceHandlerManager>();
@@ -219,7 +193,6 @@ namespace ManosabaLoader
                         needEma = true;
                 }
 
-                // 仅当对应 metadata 存在时触发
                 var metaMap = chMgr.Configuration.Metadata;
                 if (needEma && metaMap.ContainsId("Trial"))
                 {
@@ -266,11 +239,16 @@ namespace ManosabaLoader
 
         /// <summary>
         /// 完成所有 mod handler 的注册。
-        /// 由 WatcherComponent 在源面板都可见时调用。
+        /// 由 <see cref="TrialChoiceHandlerPanel_Awake_Patch"/> 在每个源面板 Awake 时调用。
+        /// 幂等：当源面板齐备且尚未注册时执行一次，之后立即返回 true。
         /// </summary>
         internal static bool TryFinalizeRegistration()
         {
             if (registered) return true;
+            // 重入保护：Instantiate 克隆面板会同步触发其 Awake → 触发我们的 Postfix → 再次进入此方法。
+            // 若不阻断会无限递归（每次都尝试克隆所有 pendingHandlers）直到栈溢出。
+            if (finalizing) return false;
+            if (pendingHandlers.Count == 0) return false;
 
             var (emaSrc, hiroSrc) = FindLoadedSourcePanels();
 
@@ -287,6 +265,7 @@ namespace ManosabaLoader
             if (needEma && emaSrc == null) return false;
             if (needHiro && hiroSrc == null) return false;
 
+            finalizing = true;
             try
             {
                 var rpm = Engine.GetServiceOrErr<ResourceProviderManager>();
@@ -394,6 +373,10 @@ namespace ManosabaLoader
                 HandlerLogError($"TryFinalizeRegistration failed: {ex}");
                 return false;
             }
+            finally
+            {
+                finalizing = false;
+            }
         }
 
         /// <summary>
@@ -455,60 +438,25 @@ namespace ManosabaLoader
     }
 
     /// <summary>
-    /// 每帧检查源面板是否已加载，一旦可见即完成注册并自毁。
+    /// 源面板（TrialChoiceHandlerPanel @Ema/@Hiro）Awake 时尝试 finalize 注册。
+    ///
+    /// Awake 实际声明在基类 <see cref="ChoiceHandlerPanel"/>（Naninovel 运行时）；
+    /// TrialChoiceHandlerPanel / ChoiceHandlerPanelModified 都未重写。Harmony 必须 patch
+    /// 实际声明类型上的方法（typeof(TrialChoiceHandlerPanel) 找不到 Awake 会抛
+    /// "Undefined target method"）。因此此 Postfix 会在所有 ChoiceHandlerPanel 子类
+    /// Awake 时触发，用 TryCast 过滤，仅对 TrialChoiceHandlerPanel 实例响应。
     /// </summary>
-    public class ModChoiceHandlerWatcherComponent : MonoBehaviour
-    {
-        private const int MaxAttempts = 600; // ~10 秒 (60fps)
-        private int attempts = 0;
-        private int reTriggerInterval = 60; // 每 60 帧重试一次 GetOrAddActor
-
-        void Update()
-        {
-            attempts++;
-
-            if (ModChoiceHandlerLoader.TryFinalizeRegistration())
-            {
-                UnityEngine.Object.Destroy(this);
-                return;
-            }
-
-            // 周期性重试 GetOrAddActor 以防初次失败
-            if (attempts % reTriggerInterval == 0)
-            {
-                try
-                {
-                    var chMgr = Engine.GetServiceOrErr<ChoiceHandlerManager>();
-                    if (chMgr != null)
-                    {
-                        var (ema, hiro) = ModChoiceHandlerLoader.FindLoadedSourcePanels();
-                        if (ema == null && chMgr.Configuration.Metadata.ContainsId("Trial"))
-                            { var _ = chMgr.GetOrAddActor("Trial"); }
-                        if (hiro == null && chMgr.Configuration.Metadata.ContainsId("TrialHiro"))
-                            { var _ = chMgr.GetOrAddActor("TrialHiro"); }
-                    }
-                }
-                catch { /* swallow; we'll retry next frame */ }
-            }
-
-            if (attempts >= MaxAttempts)
-            {
-                ModChoiceHandlerLoader.HandlerLogWarning(
-                    $"ModChoiceHandlerWatcherComponent giving up after {attempts} attempts; " +
-                    "source panels never appeared. Mod handlers will not be registered.");
-                UnityEngine.Object.Destroy(this);
-            }
-        }
-    }
-
     [HarmonyPatch]
-    static class ChoiceHandler_TitleUi_Patch
+    static class TrialChoiceHandlerPanel_Awake_Patch
     {
-        [HarmonyPatch(typeof(WitchTrials.Views.TitleUi), "Awake")]
+        [HarmonyPatch(typeof(ChoiceHandlerPanel), "Awake")]
         [HarmonyPostfix]
-        static void TitleUi_Awake_PostfixForChoiceHandler()
+        static void Postfix(ChoiceHandlerPanel __instance)
         {
-            ModChoiceHandlerLoader.Awake();
+            if (__instance == null) return;
+            // IL2CPP 安全的类型过滤：非 TrialChoiceHandlerPanel 子类 TryCast 返回 null。
+            if (__instance.TryCast<TrialChoiceHandlerPanel>() == null) return;
+            ModChoiceHandlerLoader.TryFinalizeRegistration();
         }
     }
 }

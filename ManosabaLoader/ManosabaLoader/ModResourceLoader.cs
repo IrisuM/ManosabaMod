@@ -111,6 +111,7 @@ namespace ManosabaLoader
             ModRuleNoteLoader.ClearModData();
             ModProfileLoader.ClearModData();
             ModMovieLoader.ClearModData();
+            // 行为加载器的数据在 TitleUi.Awake 时一次性加载，跨 mod 切换持久；不在此处清理。
             _currentLoadedModKey = null;
             ScriptLoaderLogInfo("All mod injection data cleared.");
         }
@@ -140,6 +141,10 @@ namespace ManosabaLoader
             ModRuleNoteLoader.LoadModData(modKey, modItem);
             ModProfileLoader.LoadModData(modKey, modPath, modItem);
             ModMovieLoader.LoadModData(modKey, modPath);
+            // 行为加载器（choice handler / cut-in）走 eager-scan 路径而非 lazy per-current-mod：
+            // AddChoice.PreloadResources 在脚本 preload 阶段就会按 handler ID 解析资源，
+            // 此时 WitchBookScreen.UpdateVersion 等懒加载触发点尚未触发，必须在 TitleUi.Awake
+            // 时把所有 mod 的 handler/cut-in 数据一次性注册好。详见 ModResourceLoader.Awake。
             ScriptLoaderLogMessage($"Loaded injection data for mod: {modKey}");
         }
 
@@ -282,6 +287,27 @@ namespace ManosabaLoader
                 foreach (var c in ScriptWorkingManager.ModInfo.Description.Characters)
                     AddRichCharacter("", c);
             }
+
+            // 行为加载器（choice handler / cut-in）的 eager scan：
+            // 这两类在脚本 preload 阶段（AddChoice.PreloadResources / @gosubCutIn）按 ID 即时解析资源，
+            // 必须在 TitleUi.Awake 这个早期同步点把所有 mod 的数据一次性注册完毕，
+            // 不能等到 EnsureModDataLoaded 的懒加载路径（那走的是后期 UI hook）。
+            foreach (var item in ModManager.ModManager.Items)
+            {
+                string modPath = Path.Combine(rootPath, item.Key);
+                ModChoiceHandlerLoader.LoadModData(item.Key, modPath, item.Value);
+                ModObjectionCutInLoader.LoadModData(item.Key, modPath, item.Value);
+            }
+            if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo != null)
+            {
+                ModChoiceHandlerLoader.LoadModData(WorkspaceModKey, ScriptWorkingManager.WorkspacePath, ScriptWorkingManager.ModInfo);
+                ModObjectionCutInLoader.LoadModData(WorkspaceModKey, ScriptWorkingManager.WorkspacePath, ScriptWorkingManager.ModInfo);
+            }
+
+            // Cut-in 加载器的 per-Trial 状态重置（instanceCaches / pendingEntry / layersDumped）。
+            // Choice handler 不需要 per-Trial 重置：源面板预热在 LoadModData 末尾触发，
+            // clone+metadata 注册由 TrialChoiceHandlerPanel.Awake 的 Harmony patch 完成。
+            ModObjectionCutInLoader.OnTitleAwake();
         }
         public static void AddModStartMenu()
         {

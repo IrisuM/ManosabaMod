@@ -207,51 +207,59 @@ namespace ManosabaLoader
         {
             harmony.PatchAll(typeof(CustomVariableManager_SetVariableValue_Patch));
             harmony.PatchAll(typeof(ObjectionCutIn_SetSpawnParameters_Patch));
-            harmony.PatchAll(typeof(CutIn_TitleUi_Patch));
-            CutInLogInfo("ModObjectionCutInLoader initialized.");
+            CutInLogInfo("ModObjectionCutInLoader patches applied.");
+        }
+
+        /// <summary>加载指定 mod 的 cut-in 条目，预加载 Texture2D 与 ResolvedShaders。</summary>
+        public static void LoadModData(string modKey, string modPath, ModItem modItem)
+        {
+            if (modItem?.Description?.CutIns == null) return;
+
+            int count = 0;
+            foreach (var entry in modItem.Description.CutIns)
+            {
+                if (RegisterEntry(entry, modPath)) count++;
+            }
+
+            if (count > 0)
+                CutInLogMessage($"Registered {count} mod cut-in(s) for mod: {modKey}");
+        }
+
+        /// <summary>清除所有 mod cut-in 缓存（释放预加载 Texture 与 Sprite）。</summary>
+        public static void ClearModData()
+        {
+            registry.Clear();
+            foreach (var tex in textureCache.Values)
+                if (tex != null) UnityEngine.Object.Destroy(tex);
+            textureCache.Clear();
+            foreach (var sp in spriteCache.Values)
+                if (sp != null) UnityEngine.Object.Destroy(sp);
+            spriteCache.Clear();
+            instanceCaches.Clear();
+            pendingEntry = null;
+            insideRewrite = false;
+            layersDumped = false;
+            CutInLogInfo("CutInLoader data cleared.");
         }
 
         /// <summary>
-        /// TitleUi.Awake 后调用：扫描所有 mod 的 CutIns 条目，预加载 Texture2D，
-        /// 预烘焙 ResolvedShaders。
+        /// 由 ModResourceLoader.Awake（TitleUi.Awake 后）调用，重置 per-Trial 运行时状态。
+        /// 数据本身（registry / textureCache / spriteCache）由 LoadModData 在 mod 加载时填充，跨 Trial 持久。
+        /// 此处仅清理 instanceCaches（旧 ObjectionCutIn GameObject 已销毁，InstanceID 失效）
+        /// 与 hijack 暂存状态。
         /// </summary>
-        public static void Awake()
+        public static void OnTitleAwake()
         {
-            registry.Clear();
-            // textureCache / spriteCache 不清：跨 mod 切换时已解析的资源仍然有效（key 包含 modId）
-            // instanceCaches 必须清：Title→Trial 间 ObjectionCutIn GameObject 已销毁，旧 InstanceID 失效
             instanceCaches.Clear();
-
-            int count = 0;
-            foreach (var kv in ModManager.ModManager.Items)
-            {
-                var desc = kv.Value?.Description;
-                if (desc?.CutIns == null) continue;
-                string modRoot = Path.Combine(Plugin.Instance.ModRootPath, kv.Key);
-                foreach (var entry in desc.CutIns)
-                {
-                    if (RegisterEntry(entry, modRoot)) count++;
-                }
-            }
-
-            if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo?.Description?.CutIns != null)
-            {
-                foreach (var entry in ScriptWorkingManager.ModInfo.Description.CutIns)
-                {
-                    if (RegisterEntry(entry, ScriptWorkingManager.WorkspacePath)) count++;
-                }
-            }
-
-            // 进入 Title 时清空暂存，避免上一局残留状态
             pendingEntry = null;
             insideRewrite = false;
             // 重置 layersDumped，让每次 Title→Trial 都能拿到一份新的诊断 dump
             layersDumped = false;
 
-            if (count == 0)
+            if (registry.Count == 0)
                 CutInLogDebug("No mod cut-ins configured; hijack patches inactive.");
             else
-                CutInLogInfo($"Registered {count} mod cut-in(s). Will hijack via SetVariableValue at runtime.");
+                CutInLogDebug($"OnTitleAwake: {registry.Count} mod cut-in(s) ready; per-Trial state reset.");
         }
 
         private static bool RegisterEntry(ModItem.ModObjectionCutIn entry, string modRoot)
@@ -886,17 +894,6 @@ namespace ManosabaLoader
         static void Postfix(ObjectionCutIn __instance)
         {
             ModObjectionCutInLoader.HandleSetSpawnParametersPostfix(__instance);
-        }
-    }
-
-    [HarmonyPatch]
-    static class CutIn_TitleUi_Patch
-    {
-        [HarmonyPatch(typeof(WitchTrials.Views.TitleUi), "Awake")]
-        [HarmonyPostfix]
-        static void TitleUi_Awake_PostfixForCutIn()
-        {
-            ModObjectionCutInLoader.Awake();
         }
     }
 }
