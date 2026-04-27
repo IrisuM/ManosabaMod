@@ -202,6 +202,152 @@ namespace ManosabaLoader.ModManager
             public LocalizedString Description { get; set; } = new();
         }
 
+        /// <summary>
+        /// Mod 自定义 @choice handler。
+        /// 在剧本中通过 <c>@choice "..." handler:"&lt;Id&gt;"</c> 使用。
+        /// 克隆原版 Trial / TrialHiro 面板，仅替换其中的人物立绘 Sprite。
+        /// </summary>
+        public class ModChoiceHandler
+        {
+            /// <summary>handler ID，剧本中作为 <c>handler:"..."</c> 的值使用。</summary>
+            public string Id { get; set; } = "";
+            /// <summary>克隆来源面板：<c>"Trial"</c>（默认）或 <c>"TrialHiro"</c>。</summary>
+            public string BasePanel { get; set; } = "Trial";
+            /// <summary>立绘图片路径，相对于 mod 目录，如 <c>"ChoiceHandlers/anan.png"</c>。</summary>
+            public string Portrait { get; set; } = "";
+        }
+
+        /// <summary>
+        /// Cut-in prefab 内各 Shader Graph shader 的参数覆盖。按视觉元素分组：
+        /// 每个子配置对应 prefab 中一类 SpriteRenderer（按 shader 名匹配），
+        /// 通过 <see cref="UnityEngine.MaterialPropertyBlock"/> 实现 per-property 覆盖。
+        /// 任何字段 null/空 = 保持 sharedMaterial 角色默认值（Hiro/Ema 等专属配色）。
+        ///
+        /// JSON 示例（所有字段都是可选的，按需声明）：
+        /// <code>
+        /// "Shaders": {
+        ///   "Background":       { "PrimaryColor": "#66CCFF", "SecondaryColor": "#001133", "BlendFactor": 0.5 },
+        ///   "StainedGlass":     { "FlameColor": "#33FF99", "Fader": 0.7, "Speed": 4.0 },
+        ///   "StainedGlassGlow": { "Color": "#AAEEFF" },
+        ///   "CharacterShadow":  { "Color": "#88AACC" },
+        ///   "CharacterGlow":    { "Color": "#CCEEFF", "Tick": 0.4 }
+        /// }
+        /// </code>
+        /// </summary>
+        public class ModShaders
+        {
+            /// <summary>
+            /// 全屏噪点 / 渐变背景层（BackGround GameObject）。
+            /// Shader: <c>Shader Graphs/Background_0Fix</c>。
+            /// </summary>
+            public BackgroundParams Background { get; set; }
+
+            /// <summary>
+            /// 破碎彩色玻璃碎片（RefuteCutIn_StainedGlass_001/002/003）。
+            /// Shader: <c>Shader Graphs/Glasses_0Fix</c>。
+            /// </summary>
+            public StainedGlassParams StainedGlass { get; set; }
+
+            /// <summary>
+            /// 彩色玻璃发光叠加层（RefuteCutIn_StainedGlass_luminescence）。
+            /// Shader: <c>Shader Graphs/Iuminescence_dezolve_0Fix</c>。
+            /// </summary>
+            public StainedGlassGlowParams StainedGlassGlow { get; set; }
+
+            /// <summary>
+            /// 角色侧 / 背阴影叠加（RefuteCutIn_Hiro_Shadow）。
+            /// Shader: <c>Shader Graphs/Shadow_Fix</c>。
+            /// </summary>
+            public CharacterShadowParams CharacterShadow { get; set; }
+
+            /// <summary>
+            /// 角色发光叠加（RefuteCutIn_Hiro_luminescence）。
+            /// Shader: <c>Shader Graphs/Iuminescence_Silhouette_0Fix</c>。
+            /// </summary>
+            public CharacterGlowParams CharacterGlow { get; set; }
+
+            /// <summary>Background_0Fix shader 参数。</summary>
+            public class BackgroundParams
+            {
+                /// <summary>主色调，覆盖 <c>_BackgroundA</c>（角色专属，默认 Hiro 红）。HTML 格式。</summary>
+                public string PrimaryColor { get; set; }
+                /// <summary>副色调，覆盖 <c>_BackgroundB</c>（默认黑）。参与渐变 / 混合。HTML 格式。</summary>
+                public string SecondaryColor { get; set; }
+                /// <summary>混合 / 噪点因子，覆盖 <c>_Float</c>（默认 0.3）。</summary>
+                public float? BlendFactor { get; set; }
+            }
+
+            /// <summary>Glasses_0Fix shader 参数。</summary>
+            public class StainedGlassParams
+            {
+                /// <summary>火焰色调，覆盖 <c>_EclipseFlame</c>（默认红色）。HTML 格式。</summary>
+                public string FlameColor { get; set; }
+                /// <summary>渐变因子 1，覆盖 <c>_Fader</c>（默认 0.5，范围 0–1）。</summary>
+                public float? Fader { get; set; }
+                /// <summary>渐变因子 2，覆盖 <c>_Fader2</c>（默认 0.5，范围 0–1）。</summary>
+                public float? Fader2 { get; set; }
+                /// <summary>动画速度，覆盖 <c>_Speed</c>（默认 3）。</summary>
+                public float? Speed { get; set; }
+                /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.119，范围 0–1）。</summary>
+                public float? Tick { get; set; }
+                /// <summary>边缘宽度，覆盖 <c>_EdgeSize</c>（默认 0.03）。</summary>
+                public float? EdgeSize { get; set; }
+            }
+
+            /// <summary>Iuminescence_dezolve_0Fix shader 参数。</summary>
+            public class StainedGlassGlowParams
+            {
+                /// <summary>主色，覆盖 <c>_Color</c>（默认 #FFDEFF）。HTML 格式。</summary>
+                public string Color { get; set; }
+                /// <summary>火焰色，覆盖 <c>_EclipseFlame</c>（默认红色）。HTML 格式。</summary>
+                public string FlameColor { get; set; }
+                /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.1，范围 0–1）。</summary>
+                public float? Tick { get; set; }
+            }
+
+            /// <summary>Shadow_Fix shader 参数。</summary>
+            public class CharacterShadowParams
+            {
+                /// <summary>阴影主色，覆盖 <c>_Color</c>（默认白）。HTML 格式。</summary>
+                public string Color { get; set; }
+            }
+
+            /// <summary>Iuminescence_Silhouette_0Fix shader 参数。</summary>
+            public class CharacterGlowParams
+            {
+                /// <summary>发光主色，覆盖 <c>_Color</c>（默认 #FFDEFF）。HTML 格式。</summary>
+                public string Color { get; set; }
+                /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.119，范围 0–1）。</summary>
+                public float? Tick { get; set; }
+            }
+        }
+
+        /// <summary>
+        /// Mod 自定义 cut-in（异议演出）。
+        /// 在剧本中通过 <c>@gosubCutIn "&lt;Id&gt;" index:N</c> 使用。
+        /// 克隆原版 ObjectionCutIn_Hiro prefab，按名称替换其中的 Sprite，
+        /// 复用原版动画时间轴和 per-index 可见性切换。
+        /// </summary>
+        public class ModObjectionCutIn
+        {
+            /// <summary>CutIn ID，对应 <c>@gosubCutIn "Id"</c> 的值。所有 mod 之间必须唯一。</summary>
+            public string Id { get; set; } = "";
+            /// <summary>克隆来源模板。v1 仅支持 <c>"Hiro"</c>。</summary>
+            public string BaseTemplate { get; set; } = "Hiro";
+            /// <summary>
+            /// 原版 Sprite 名 → mod 内相对图片路径的替换映射。
+            /// 例如 <c>{ "Hiro_CutIn_001": "Cutins/MyChar/main_001.png", ... }</c>。
+            /// 未列出的 Sprite 保持原版不变。
+            /// </summary>
+            public Dictionary<string, string> Sprites { get; set; } = new();
+
+            /// <summary>
+            /// 覆盖 cut-in prefab 内各 Shader Graph shader 的参数。按视觉元素分组。
+            /// 任何字段 null/空 = 保持该项的角色默认；整个对象 null = 完全保持原版。
+            /// </summary>
+            public ModShaders Shaders { get; set; }
+        }
+
         public class ModDescription
         {
             const string DefaultAuthor = "佚名";
@@ -232,6 +378,17 @@ namespace ManosabaLoader.ModManager
             public ModVersionedGroup<ModProfile>[] Profiles { get; set; } = [];
             public ModVersionedGroup<ModRuleItem>[] Rules { get; set; } = [];
             public ModVersionedGroup<ModNoteItem>[] Notes { get; set; } = [];
+            /// <summary>
+            /// Mod 自定义 @choice handler。每个条目克隆原版 Trial 面板并替换立绘，
+            /// 在剧本中可通过 <c>handler:"&lt;Id&gt;"</c> 使用。
+            /// </summary>
+            public ModChoiceHandler[] ChoiceHandlers { get; set; } = [];
+
+            /// <summary>
+            /// Mod 自定义 cut-in。每个条目克隆原版 ObjectionCutIn_Hiro prefab 并按名称替换 sprite，
+            /// 在剧本中可通过 <c>@gosubCutIn "&lt;Id&gt;" index:N</c> 使用。
+            /// </summary>
+            public ModObjectionCutIn[] CutIns { get; set; } = [];
 
             /// <summary>
             /// 自定义章节名映射：脚本路径 → 存档画面显示的章节名。
