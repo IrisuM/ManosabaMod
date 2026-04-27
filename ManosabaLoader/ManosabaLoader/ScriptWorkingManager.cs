@@ -54,7 +54,7 @@ public static class ScriptWorkingManager
         }
 
         ModInfo = new ModItem(ConfigJsonPath, File.ReadAllText(ConfigJsonPath));
-        logger.LogInfo($"Loaded mod config from {ConfigJsonPath}. Mod name: {ModInfo.Description.Name}, Entry: {ModInfo.Description.Enter}");
+        logger.LogInfo($"Loaded mod config from {ConfigJsonPath}. Mod name: {ModInfo.Description.Name.Resolve()}, Entry: {ModInfo.Description.Enter}");
 
         bridgingService = new BridgingService(WorkspacePath, ModJsonSerializer.Shared.Cast<ISerializer>());
 

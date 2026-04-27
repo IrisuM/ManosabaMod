@@ -57,8 +57,8 @@ namespace ManosabaLoader
         public static Action<string> ChapterLogDebug;
         public static Action<string> ChapterLogWarning;
         public static Action<string> ChapterLogError;
-        /// <summary>脚本路径 → 自定义章节名</summary>
-        private static readonly Dictionary<string, string> chapterNameMap = new();
+        /// <summary>脚本路径 → 自定义章节名（支持本地化）</summary>
+        private static readonly Dictionary<string, ModItem.LocalizedString> chapterNameMap = new();
 
         public static void Init(Harmony harmony)
         {
@@ -90,7 +90,7 @@ namespace ManosabaLoader
 
             foreach (var kvp in modItem.Description.ChapterNames)
             {
-                if (string.IsNullOrEmpty(kvp.Key) || string.IsNullOrEmpty(kvp.Value))
+                if (string.IsNullOrEmpty(kvp.Key) || kvp.Value == null)
                 {
                     ChapterLogWarning($"[{modPrefix}] Skipping empty chapter name entry.");
                     continue;
@@ -102,7 +102,7 @@ namespace ManosabaLoader
                 }
 
                 chapterNameMap[kvp.Key] = kvp.Value;
-                ChapterLogDebug($"[{modPrefix}] Chapter: {kvp.Key} → {kvp.Value}");
+                ChapterLogDebug($"[{modPrefix}] Chapter: {kvp.Key} → {kvp.Value.Resolve()}");
             }
         }
 
@@ -110,7 +110,15 @@ namespace ManosabaLoader
         /// 查找指定脚本路径的自定义章节名。
         /// </summary>
         public static bool TryGetChapterName(string scriptPath, out string chapterName)
-            => chapterNameMap.TryGetValue(scriptPath, out chapterName);
+        {
+            if (chapterNameMap.TryGetValue(scriptPath, out var ls))
+            {
+                chapterName = ls.Resolve();
+                return !string.IsNullOrEmpty(chapterName);
+            }
+            chapterName = null;
+            return false;
+        }
 
         // ====================================================================
         // Harmony Patch

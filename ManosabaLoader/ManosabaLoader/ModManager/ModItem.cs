@@ -3,6 +3,7 @@ using GigaCreation.Essentials.Localization;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -112,6 +113,89 @@ namespace ManosabaLoader.ModManager
             public LocalizedString Description { get; set; } = new();
         }
 
+        /// <summary>
+        /// 自定义 JSON 转换器：同时支持纯字符串（向后兼容，视为 zh-Hans）和标准对象格式。
+        /// </summary>
+        public class LocalizedStringConverter : JsonConverter<LocalizedString>
+        {
+            public override LocalizedString Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                if (reader.TokenType == JsonTokenType.String)
+                    return new LocalizedString { ZhHans = reader.GetString() };
+
+                if (reader.TokenType == JsonTokenType.Null)
+                    return null;
+
+                if (reader.TokenType == JsonTokenType.StartObject)
+                {
+                    var ls = new LocalizedString();
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType == JsonTokenType.EndObject) break;
+                        if (reader.TokenType == JsonTokenType.PropertyName)
+                        {
+                            string prop = reader.GetString();
+                            reader.Read();
+                            switch (prop)
+                            {
+                                case "ja": ls.Ja = reader.GetString(); break;
+                                case "zh-Hans": ls.ZhHans = reader.GetString(); break;
+                            }
+                        }
+                    }
+                    return ls;
+                }
+
+                throw new JsonException($"Unexpected token {reader.TokenType} for LocalizedString");
+            }
+
+            public override void Write(Utf8JsonWriter writer, LocalizedString value, JsonSerializerOptions options)
+            {
+                if (value == null) { writer.WriteNullValue(); return; }
+                writer.WriteStartObject();
+                if (value.Ja != null) writer.WriteString("ja", value.Ja);
+                if (value.ZhHans != null) writer.WriteString("zh-Hans", value.ZhHans);
+                writer.WriteEndObject();
+            }
+        }
+
+        /// <summary>
+        /// Dictionary&lt;string, LocalizedString&gt; 的自定义转换器：
+        /// 值同时支持纯字符串（向后兼容）和 LocalizedString 对象。
+        /// </summary>
+        public class LocalizedStringDictionaryConverter : JsonConverter<Dictionary<string, LocalizedString>>
+        {
+            public override Dictionary<string, LocalizedString> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                var dict = new Dictionary<string, LocalizedString>();
+                if (reader.TokenType != JsonTokenType.StartObject)
+                    throw new JsonException("Expected StartObject for dictionary");
+
+                var lsConverter = new LocalizedStringConverter();
+                while (reader.Read())
+                {
+                    if (reader.TokenType == JsonTokenType.EndObject) break;
+                    string key = reader.GetString();
+                    reader.Read();
+                    dict[key] = lsConverter.Read(ref reader, typeof(LocalizedString), options);
+                }
+                return dict;
+            }
+
+            public override void Write(Utf8JsonWriter writer, Dictionary<string, LocalizedString> value, JsonSerializerOptions options)
+            {
+                writer.WriteStartObject();
+                var lsConverter = new LocalizedStringConverter();
+                foreach (var kvp in value)
+                {
+                    writer.WritePropertyName(kvp.Key);
+                    lsConverter.Write(writer, kvp.Value, options);
+                }
+                writer.WriteEndObject();
+            }
+        }
+
+        [JsonConverter(typeof(LocalizedStringConverter))]
         public class LocalizedString
         {
             [JsonPropertyName("ja")]
@@ -353,13 +437,13 @@ namespace ManosabaLoader.ModManager
             const string DefaultAuthor = "佚名";
             const string DefaultDescription = "无内容。";
 
-            /// <summary>info.json 的 Schema 版本号。当前目标版本为 2.1。</summary>
+            /// <summary>info.json 的 Schema 版本号。当前目标版本为 2.2。</summary>
             [JsonPropertyName("$schemaVersion")]
             public string SchemaVersion { get; set; }
 
-            public string Name { get; set; } = "";
-            public string Description { get; set; } = DefaultDescription;
-            public string Author { get; set; } = DefaultAuthor;
+            public LocalizedString Name { get; set; } = new() { ZhHans = "" };
+            public LocalizedString Description { get; set; } = new() { ZhHans = DefaultDescription };
+            public LocalizedString Author { get; set; } = new() { ZhHans = DefaultAuthor };
             public string Version { get; set; } = "1.0.0";
             public string Enter { get; set; } = "";
             /// <summary>只注入 Naninovel 的简单角色。</summary>
@@ -391,21 +475,21 @@ namespace ManosabaLoader.ModManager
             public ModObjectionCutIn[] CutIns { get; set; } = [];
 
             /// <summary>
-            /// 自定义章节名映射：脚本路径 → 存档画面显示的章节名。
-            /// 
+            /// 自定义章节名映射：脚本路径 → 存档画面显示的章节名（支持本地化）。
+            ///
             /// 键为 Naninovel 脚本路径（与 PlaybackSpot.ScriptPath 对应），
-            /// 值为要在存档画面中显示的自定义文字。
-            /// 
+            /// 值为要在存档画面中显示的自定义文字，支持 LocalizedString 或纯字符串（向后兼容）。
+            ///
             /// 示例：
             /// <code>
             /// "ChapterNames": {
-            ///     "mymod_1_1_Adv": "第一幕 第一章",
-            ///     "mymod_1_2_Trial": "第一幕 第二章 审判",
-            ///     "mymod_ending": "终章"
+            ///     "mymod_1_1_Adv": { "zh-Hans": "第一幕 第一章", "ja": "第一幕 第一章" },
+            ///     "mymod_1_2_Trial": "第一幕 第二章 审判"
             /// }
             /// </code>
             /// </summary>
-            public Dictionary<string, string> ChapterNames { get; set; } = new();
+            [JsonConverter(typeof(LocalizedStringDictionaryConverter))]
+            public Dictionary<string, LocalizedString> ChapterNames { get; set; } = new();
         }
         class ModItemException : Exception
         {
@@ -413,7 +497,7 @@ namespace ManosabaLoader.ModManager
         }
 
         /// <summary>当前 info.json schema 版本。</summary>
-        public const string CurrentSchemaVersion = "2.1";
+        public const string CurrentSchemaVersion = "2.2";
 
         private static readonly JsonSerializerOptions MigrationWriteOptions = new()
         {
@@ -447,7 +531,7 @@ namespace ManosabaLoader.ModManager
             {
                 config = MigrateIfNeeded(path, config);
                 description = JsonSerializer.Deserialize<ModDescription>(config);
-                if (description == null || string.IsNullOrEmpty(description.Name) || string.IsNullOrEmpty(description.Enter))
+                if (description == null || string.IsNullOrEmpty(description.Name?.Resolve()) || string.IsNullOrEmpty(description.Enter))
                 {
                     throw new ModItemException("config format error.");
                 }
@@ -481,6 +565,7 @@ namespace ManosabaLoader.ModManager
         [
             ("1.0", "2.0", Migrate_1_0_To_2_0),
             ("2.0", "2.1", Migrate_2_0_To_2_1),
+            ("2.1", "2.2", Migrate_2_1_To_2_2),
         ];
 
         /// <summary>
@@ -637,6 +722,37 @@ namespace ManosabaLoader.ModManager
         {
             obj["$schemaVersion"] = "2.1";
             ModManager.ModManagerLogMessage("Migration 2.0→2.1: added $schemaVersion field.");
+        }
+
+        /// <summary>
+        /// 2.1 → 2.2 迁移：将 Name/Description/Author 从字符串转为 LocalizedString 对象，
+        /// 将 ChapterNames 的值从字符串转为 LocalizedString 对象。
+        /// </summary>
+        private static void Migrate_2_1_To_2_2(JsonObject obj)
+        {
+            foreach (var field in new[] { "Name", "Description", "Author" })
+            {
+                var node = obj[field];
+                if (node is JsonValue val && val.TryGetValue(out string strVal))
+                {
+                    obj[field] = new JsonObject { ["zh-Hans"] = strVal };
+                }
+            }
+
+            if (obj["ChapterNames"] is JsonObject chapters)
+            {
+                foreach (var key in chapters.Select(kvp => kvp.Key).ToList())
+                {
+                    var val = chapters[key];
+                    if (val is JsonValue jv && jv.TryGetValue(out string s))
+                    {
+                        chapters[key] = new JsonObject { ["zh-Hans"] = s };
+                    }
+                }
+            }
+
+            obj["$schemaVersion"] = "2.2";
+            ModManager.ModManagerLogMessage("Migration 2.1→2.2: converted Name/Description/Author/ChapterNames to LocalizedString.");
         }
     }
 }
