@@ -372,11 +372,11 @@ namespace ManosabaLoader
 
             //原始剧本
             var version = Engine.GetServiceOrErr<StateManagerExtended>().GlobalState.GetState<VersioningManager.VersioningState>().EditedVersion;
-            choice_list += "@choice \"原版游戏剧情\" Lock:false play:true show:true" + "\n";
+            choice_list += "@choice \"" + ModUiStrings.Get("VanillaTitle") + "\" Lock:false play:true show:true" + "\n";
             choice_list += "    @set \"nextScenario=\\\"Act01_Chapter01/Act01_Chapter01_Adv01\\\"\"" + "\n";
             choice_list += "    @set \"modKey=\\\"" + VanillaModKey + "\\\"\"" + "\n";
-            choice_list += "    @set \"modName=\\\"原版游戏剧情\\\"\"" + "\n";
-            choice_list += "    @set \"modDescription=\\\"原汁原味的游戏内容。\\\"\"" + "\n";
+            choice_list += "    @set \"modName=\\\"" + ModUiStrings.Get("VanillaTitle") + "\\\"\"" + "\n";
+            choice_list += "    @set \"modDescription=\\\"" + ModUiStrings.Get("VanillaDescription") + "\\\"\"" + "\n";
             choice_list += "    @set \"modAuthor=\\\"Acacia, Re,AER\\\"\"" + "\n";
             choice_list += "    @set \"modVersion=\\\"" + version.Major + "." + version.Minor + "." + version.Patch + "\\\"\"" + "\n";
             choice_list += "    @goto .GoToModScript" + "\n";
@@ -388,7 +388,7 @@ namespace ManosabaLoader
                 var modItem = ScriptWorkingManager.ModInfo;
                 choice_list += 
 $"""
-@choice "工作区：{modItem.Description.Name}" Lock:false play:true show:true
+@choice "{ModUiStrings.Get("WorkspacePrefix")}{modItem.Description.Name}" Lock:false play:true show:true
     @set "modKey=\"{WorkspaceModKey}\""
     @set "modName=\"{modItem.Description.Name}\""
     @set "modDescription=\"{modItem.Description.Description}\""
@@ -409,12 +409,12 @@ $"""
                     if (choice_page > 0)
                     {
                         //上一页
-                        choice_list += "@choice \"上一页\" Lock:false play:true show:true" + "\n";
+                        choice_list += "@choice \"" + ModUiStrings.Get("PrevPage") + "\" Lock:false play:true show:true" + "\n";
                         choice_list += "    @goto ." + perChoiceLabel + (choice_page - 1) + "\n";
                     }
 
                     //下一页
-                    choice_list += "@choice \"下一页\" Lock:false play:true show:true" + "\n";
+                    choice_list += "@choice \"" + ModUiStrings.Get("NextPage") + "\" Lock:false play:true show:true" + "\n";
                     choice_list += "    @goto ." + perChoiceLabel + (choice_page + 1) + "\n";
 
                     choice_list += "@Stop" + "\n";
@@ -438,7 +438,7 @@ $"""
 
             //添加结尾
             //上一页
-            choice_list += "@choice \"上一页\" Lock:false play:true show:true" + "\n";
+            choice_list += "@choice \"" + ModUiStrings.Get("PrevPage") + "\" Lock:false play:true show:true" + "\n";
             choice_list += "    @goto ." + perChoiceLabel + (choice_page - 1) + "\n";
 
             choice_list += "@Stop" + "\n";
@@ -446,13 +446,13 @@ $"""
             TaffyStart += choice_list + "\n";
 
             TaffyStart +=
-"""
+$$"""
 # GoToModScript
 @ProcessInput true set:Continue.true,Pause.true,Skip.true,ToggleSkip.true,SkipMovie.true,AutoPlay.true,ToggleUI.{allowToggleUI},ShowBacklog.true,Rollback.{allowRollback}
 @ClearBacklog
-@print "Mod名称：{modName}" author:{modAuthor} speed:1 waitInput:true Wait:true
-@print "Mod说明：{modDescription}" author:{modAuthor} speed:1 waitInput:true Wait:true
-@print "Mod版本：{modVersion}" author:{modAuthor} speed:1 waitInput:true Wait:true
+@print "{{ModUiStrings.Get("ModNameLabel")}}{modName}" author:{modAuthor} speed:1 waitInput:true Wait:true
+@print "{{ModUiStrings.Get("ModDescriptionLabel")}}{modDescription}" author:{modAuthor} speed:1 waitInput:true Wait:true
+@print "{{ModUiStrings.Get("ModVersionLabel")}}{modVersion}" author:{modAuthor} speed:1 waitInput:true Wait:true
 @ClearBacklog
 @hide Stills Lazy:false
 @back SubId:"Overlay" SolidColor tint:"#000000" time:0.5 Lazy:false
