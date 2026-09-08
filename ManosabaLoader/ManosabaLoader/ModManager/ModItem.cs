@@ -311,12 +311,15 @@ namespace ManosabaLoader.ModManager
         /// <code>
         /// "Shaders": {
         ///   "Background":       { "PrimaryColor": "#66CCFF", "SecondaryColor": "#001133", "BlendFactor": 0.5 },
-        ///   "StainedGlass":     { "FlameColor": "#33FF99", "Fader": 0.7, "Speed": 4.0 },
+        ///   "StainedGlass":     { "FlameColor": "#33FF99", "Fader": 0.7, "Speed": 4.0,
+        ///                         "CrackTexture": "none", "ShardTexture": "Cutins/my_shards.png" },
         ///   "StainedGlassGlow": { "Color": "#AAEEFF" },
         ///   "CharacterShadow":  { "Color": "#88AACC" },
         ///   "CharacterGlow":    { "Color": "#CCEEFF", "Tick": 0.4 }
         /// }
         /// </code>
+        /// 贴图类字段（*Texture）统一接受 mod 内相对路径或 <c>"none"</c>（全透明贴图）。
+        /// 每个字段对应的 shader 属性、原版贴图与默认值见 docs/cutin.*.md。
         /// </summary>
         public class ModShaders
         {
@@ -353,9 +356,9 @@ namespace ManosabaLoader.ModManager
             /// <summary>Background_0Fix shader 参数。</summary>
             public class BackgroundParams
             {
-                /// <summary>主色调，覆盖 <c>_BackgroundA</c>（角色专属，默认 Hiro 红）。HTML 格式。</summary>
+                /// <summary>主色调，覆盖 <c>_BackgroundA</c>（角色专属，Hiro 实测 #FF3C45）。HTML 格式。</summary>
                 public string PrimaryColor { get; set; }
-                /// <summary>副色调，覆盖 <c>_BackgroundB</c>（默认黑）。参与渐变 / 混合。HTML 格式。</summary>
+                /// <summary>副色调，覆盖 <c>_BackgroundB</c>（Hiro 实测 #000000）。参与渐变 / 混合。HTML 格式。</summary>
                 public string SecondaryColor { get; set; }
                 /// <summary>混合 / 噪点因子，覆盖 <c>_Float</c>（默认 0.3）。</summary>
                 public float? BlendFactor { get; set; }
@@ -364,42 +367,63 @@ namespace ManosabaLoader.ModManager
             /// <summary>Glasses_0Fix shader 参数。</summary>
             public class StainedGlassParams
             {
-                /// <summary>火焰色调，覆盖 <c>_EclipseFlame</c>（默认红色）。HTML 格式。</summary>
+                /// <summary>火焰色调，覆盖 <c>_EclipseFlame</c>（Hiro 实测 #FF000B）。HTML 格式。</summary>
                 public string FlameColor { get; set; }
-                /// <summary>渐变因子 1，覆盖 <c>_Fader</c>（默认 0.5，范围 0–1）。</summary>
+                /// <summary>渐变因子 1，覆盖 <c>_Fader</c>（范围 0–1；由演出动画驱动，静止值 1，覆盖会定住动画）。</summary>
                 public float? Fader { get; set; }
-                /// <summary>渐变因子 2，覆盖 <c>_Fader2</c>（默认 0.5，范围 0–1）。</summary>
+                /// <summary>渐变因子 2，覆盖 <c>_Fader2</c>（范围 0–1；由演出动画驱动，静止值 1，覆盖会定住动画）。</summary>
                 public float? Fader2 { get; set; }
                 /// <summary>动画速度，覆盖 <c>_Speed</c>（默认 3）。</summary>
                 public float? Speed { get; set; }
                 /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.119，范围 0–1）。</summary>
                 public float? Tick { get; set; }
-                /// <summary>边缘宽度，覆盖 <c>_EdgeSize</c>（默认 0.03）。</summary>
+                /// <summary>边缘宽度，覆盖 <c>_EdgeSize</c>（Hiro 实测 0.02）。</summary>
                 public float? EdgeSize { get; set; }
+
+                /// <summary>
+                /// 覆盖玻璃裂纹遮罩贴图，shader 槽 <c>_kirakira</c>
+                /// （原版材质里装的是 <c>Hiro_CutIn_StainedGlass_003_kirakira2</c>：黑底白色细裂纹线，2048×883）。
+                /// 这些贴图挂在材质 Glasses_Fix_Hiro 上而不是 Sprite 上，所以无法通过 <c>Sprites</c> 替换。
+                /// 取值：mod 内相对图片路径（与玻璃 sprite 同尺寸的黑底白色遮罩），
+                /// 或 <c>"none"</c> 表示换成全透明贴图以去掉该效果。空 = 保持原版。
+                /// </summary>
+                public string CrackTexture { get; set; }
+                /// <summary>
+                /// 覆盖玻璃碎片高光遮罩贴图，shader 槽 <c>_kirakira2</c>
+                /// （原版材质里装的是 <c>Hiro_CutIn_StainedGlass_003_kirakira1</c>：黑底白色碎片块高光，2048×883）。
+                /// 取值同 <see cref="CrackTexture"/>。
+                /// </summary>
+                public string ShardTexture { get; set; }
+                /// <summary>
+                /// 覆盖玻璃发光区域遮罩贴图，shader 槽 <c>_luminescence</c>
+                /// （原版 <c>RefuteCutIn_StainedGlass_luminescence001</c>：黑底白色玻璃带剪影，2048×883）。
+                /// 取值同 <see cref="CrackTexture"/>。
+                /// </summary>
+                public string GlowMaskTexture { get; set;}
             }
 
             /// <summary>Iuminescence_dezolve_0Fix shader 参数。</summary>
             public class StainedGlassGlowParams
             {
-                /// <summary>主色，覆盖 <c>_Color</c>（默认 #FFDEFF）。HTML 格式。</summary>
+                /// <summary>主色，覆盖 <c>_Color</c>（Hiro 实测 #FDA5A4；另与该层 SpriteRenderer tint #FFDEFF 相乘）。HTML 格式。</summary>
                 public string Color { get; set; }
-                /// <summary>火焰色，覆盖 <c>_EclipseFlame</c>（默认红色）。HTML 格式。</summary>
+                /// <summary>火焰色，覆盖 <c>_EclipseFlame</c>（Hiro 实测 #FF000B）。HTML 格式。</summary>
                 public string FlameColor { get; set; }
-                /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.1，范围 0–1）。</summary>
+                /// <summary>溶解 phase，覆盖 <c>_Tick</c>（范围 0–1；由演出动画驱动，静止值 0.952，覆盖会定住动画）。</summary>
                 public float? Tick { get; set; }
             }
 
             /// <summary>Shadow_Fix shader 参数。</summary>
             public class CharacterShadowParams
             {
-                /// <summary>阴影主色，覆盖 <c>_Color</c>（默认白）。HTML 格式。</summary>
+                /// <summary>阴影主色，覆盖 <c>_Color</c>（Hiro 实测 #737D99 灰蓝）。HTML 格式。</summary>
                 public string Color { get; set; }
             }
 
             /// <summary>Iuminescence_Silhouette_0Fix shader 参数。</summary>
             public class CharacterGlowParams
             {
-                /// <summary>发光主色，覆盖 <c>_Color</c>（默认 #FFDEFF）。HTML 格式。</summary>
+                /// <summary>发光主色，覆盖 <c>_Color</c>（Hiro 实测 #FDA5A4；另与该层 SpriteRenderer tint #FFDEFF 相乘）。HTML 格式。</summary>
                 public string Color { get; set; }
                 /// <summary>动画 phase，覆盖 <c>_Tick</c>（默认 0.119，范围 0–1）。</summary>
                 public float? Tick { get; set; }
@@ -421,15 +445,65 @@ namespace ManosabaLoader.ModManager
             /// <summary>
             /// 原版 Sprite 名 → mod 内相对图片路径的替换映射。
             /// 例如 <c>{ "Hiro_CutIn_001": "Cutins/MyChar/main_001.png", ... }</c>。
-            /// 未列出的 Sprite 保持原版不变。
+            /// 值为 <c>"none"</c> 时该层换成全透明贴图（即隐藏该层）。
+            /// 未列出的 Sprite 保持原版不变。完整 key 列表见 docs/cutin.*.md。
             /// </summary>
             public Dictionary<string, string> Sprites { get; set; } = new();
+
+            /// <summary>
+            /// 原版 Sprite 名 → 该层着色（<c>SpriteRenderer.color</c>，HTML 颜色）的覆盖映射，键与 <see cref="Sprites"/> 相同。
+            /// 着色与该层的图片、材质颜色相乘；原版除 <c>Hiro_CutIn_StainedGlass_luminescence001</c>（#FFDEFF）外基本都是白色。
+            /// 若某层的着色由演出动画驱动（如 <c>White</c> 的透明度），动画写入的通道会盖掉覆盖值。
+            /// 未列出的层保持原版着色。
+            /// </summary>
+            public Dictionary<string, string> Tints { get; set; } = new();
+
+            /// <summary>
+            /// 要整层关掉的图层名列表，例如 <c>["BackGround", "Glass2"]</c>。
+            /// 每一项匹配原版 Sprite 名（与 <see cref="Sprites"/> 的键相同）或 prefab 节点名
+            /// （<c>BackGround</c> / <c>Hiro</c> / <c>CutIN</c> / <c>Glow</c> / <c>Glass2</c> / <c>Glass</c> 等，
+            /// 节点名同时关掉其下所有层）。大小写不敏感。
+            /// 通过 <c>Renderer.enabled = false</c>（Image 为 <c>Behaviour.enabled</c>）实现：演出动画只切 GameObject 激活状态，
+            /// 不碰 enabled，所以关掉的层整场演出都不会再出现。比 <c>Sprites:"none"</c> 更省，
+            /// 也是唯一能关掉 <c>BackGround</c>（颜色由 shader 生成、不采样 sprite）的方式。
+            /// 未列出的层保持原版；切回原版 cut-in 时自动恢复。
+            /// </summary>
+            public string[] HiddenLayers { get; set; } = [];
+
+            /// <summary>
+            /// 替换图网格裁切用的 alpha 阈值（0–255，默认 64）：alpha ≥ 阈值的像素算作图片的一部分。
+            /// 玻璃 shader 不读贴图 alpha，玻璃带的形状完全由网格裁出（见 ModObjectionCutInLoader / SpriteMeshBuilder）；
+            /// 调低可保留更淡的边缘和细刺，调高则裁得更紧。对该 cut-in 的所有替换图生效。null = 默认。
+            /// </summary>
+            public int? MeshAlphaThreshold { get; set; }
 
             /// <summary>
             /// 覆盖 cut-in prefab 内各 Shader Graph shader 的参数。按视觉元素分组。
             /// 任何字段 null/空 = 保持该项的角色默认；整个对象 null = 完全保持原版。
             /// </summary>
             public ModShaders Shaders { get; set; }
+
+            /// <summary>
+            /// 覆盖 cut-in 内的闪光粒子（prefab 节点 "Glass"，ParticleSystem，材质 Kirakira）。
+            /// 整个对象 null = 保持原版。
+            /// </summary>
+            public ModCutInParticles Particles { get; set; }
+        }
+
+        /// <summary>
+        /// Cut-in 闪光粒子（ParticleSystemRenderer，shader <c>Universal Render Pipeline/Particles/Unlit</c>）的覆盖。
+        /// 通过 <see cref="UnityEngine.MaterialPropertyBlock"/> 实现，不改动粒子系统本身的发射参数。
+        /// 要整个关掉粒子，在 <see cref="ModObjectionCutIn.HiddenLayers"/> 里写 <c>"Glass"</c>。
+        /// </summary>
+        public class ModCutInParticles
+        {
+            /// <summary>
+            /// 粒子贴图，覆盖 <c>_BaseMap</c>（原版 <c>kirakira</c>：128×128 白色十字星光，透明背景）。
+            /// 取值：mod 内相对图片路径，或 <c>"none"</c>（全透明，粒子不可见）。空 = 保持原版。
+            /// </summary>
+            public string Texture { get; set; }
+            /// <summary>粒子颜色乘数，覆盖 <c>_BaseColor</c>（默认白）。HTML 格式。会与粒子系统自身的颜色相乘。</summary>
+            public string Color { get; set; }
         }
 
         public class ModDescription
