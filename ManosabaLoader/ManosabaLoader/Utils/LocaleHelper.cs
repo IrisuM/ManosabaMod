@@ -71,8 +71,9 @@ namespace ManosabaLoader.Utils
                 "zh-Hans" => LocaleKind.ZhHans,
                 "zh-Hant" => LocaleKind.ZhHant,
                 "ko" => LocaleKind.Ko,
-                "fr" => LocaleKind.Fr,
-                "es" => LocaleKind.Es,
+                // Older game interop assemblies do not define these optional locales.
+                "fr" => Enum.TryParse<LocaleKind>("Fr", out var fr) ? fr : LocaleKind.ZhHans,
+                "es" => Enum.TryParse<LocaleKind>("Es", out var es) ? es : LocaleKind.ZhHans,
                 _ => LocaleKind.ZhHans
             };
         }
