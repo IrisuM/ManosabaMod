@@ -189,6 +189,7 @@ namespace ManosabaLoader
         /// <summary>语言切换后重新注入已被 InitializeProvisionSources 清除的 mod ProvisionSource。</summary>
         internal static void ReInjectModProvisionSources()
         {
+            ModReenactmentLoader.EnsureProvisionSource();
             if (modInjectedTextSources.Count == 0 && modInjectedAudioSources.Count == 0 && modInjectedVoiceSources.Count == 0)
                 return;
             int count = 0;
@@ -355,17 +356,21 @@ namespace ManosabaLoader
                 string modPath = Path.Combine(rootPath, item.Key);
                 ModChoiceHandlerLoader.LoadModData(item.Key, modPath, item.Value);
                 ModObjectionCutInLoader.LoadModData(item.Key, modPath, item.Value);
+                ModReenactmentLoader.LoadModData(item.Key, modPath, item.Value);
             }
             if (ScriptWorkingManager.IsEnabled && ScriptWorkingManager.ModInfo != null)
             {
                 ModChoiceHandlerLoader.LoadModData(WorkspaceModKey, ScriptWorkingManager.WorkspacePath, ScriptWorkingManager.ModInfo);
                 ModObjectionCutInLoader.LoadModData(WorkspaceModKey, ScriptWorkingManager.WorkspacePath, ScriptWorkingManager.ModInfo);
+                ModReenactmentLoader.LoadModData(WorkspaceModKey, ScriptWorkingManager.WorkspacePath, ScriptWorkingManager.ModInfo);
             }
 
             // Cut-in 加载器的 per-Trial 状态重置（instanceCaches / pendingEntry / layersDumped）。
             // Choice handler 不需要 per-Trial 重置：源面板预热在 LoadModData 末尾触发，
             // clone+metadata 注册由 TrialChoiceHandlerPanel.Awake 的 Harmony patch 完成。
             ModObjectionCutInLoader.OnTitleAwake();
+            // 再现演出：模板 prefab 异步加载 + 舞台克隆注册（需要 SpawnManager 的 loader 已就绪）。
+            ModReenactmentLoader.OnTitleAwake();
         }
         public static void AddModStartMenu()
         {

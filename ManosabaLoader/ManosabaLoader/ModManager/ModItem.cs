@@ -506,6 +506,136 @@ namespace ManosabaLoader.ModManager
             public string Color { get; set; }
         }
 
+        /// <summary>
+        /// Mod 自定义再现演出（Reenactment，原版 <c>Reenact_ChXX_EYY_SZZ</c> 那套"幕布 + 舞台图层 + Timeline"）。
+        /// 加载器克隆一个原版再现 prefab 作为外壳（黑边、幕布、开幕 / 闭幕动画），
+        /// 把舞台（<c>Story</c> 节点）里的原版图层全部换成 <see cref="Layers"/>，
+        /// 并为每个 <see cref="Steps"/> 生成一条固定时长的空 Timeline，图层动画由加载器按关键帧驱动。
+        /// 剧本中通过 <c>@spawn "&lt;Id&gt;" params:&lt;步骤序号&gt;</c> 播放，<c>@despawn "&lt;Id&gt;"</c> 闭幕。
+        /// 坐标单位为世界单位（100 像素 = 1 单位）；原版舞台图约 14.3 × 7.2 单位（2048×1024 图 × 0.7 缩放）。
+        /// 详见 docs/reenactment.*.md。
+        /// </summary>
+        public class ModReenactment
+        {
+            /// <summary>再现 ID，作为 <c>@spawn</c> 的路径使用。所有 mod 之间必须唯一，建议加 mod 名前缀。</summary>
+            public string Id { get; set; } = "";
+            /// <summary>外壳来源：原版再现 prefab 名（<c>Reenact_Ch01_E01_S02</c> 等，见文档列表）。默认 <c>Reenact_Ch01_E01_S02</c>。</summary>
+            public string Template { get; set; } = "Reenact_Ch01_E01_S02";
+            /// <summary>舞台图层列表，按声明顺序创建；同 <see cref="ModReenactmentLayer.Order"/> 时后声明的在上。</summary>
+            public ModReenactmentLayer[] Layers { get; set; } = [];
+            /// <summary>演出步骤列表，<c>params:N</c> 选择第 N 步（从 0 开始）。省略时视为一步、时长 1 秒、无动画。</summary>
+            public ModReenactmentStep[] Steps { get; set; } = [];
+        }
+
+        /// <summary>再现舞台上的一个图层（一个 SpriteRenderer）。</summary>
+        public class ModReenactmentLayer
+        {
+            /// <summary>图层名，在 <see cref="ModReenactmentTrack.Layer"/> 中引用。同一再现内唯一。</summary>
+            public string Name { get; set; } = "";
+            /// <summary>图片路径（相对 mod 目录，PNG/JPG）。</summary>
+            public string Sprite { get; set; } = "";
+            /// <summary>初始位置 [x, y]，世界单位，舞台中心为 (0, 0)。</summary>
+            public float[] Position { get; set; } = [0f, 0f];
+            /// <summary>初始缩放：一个数（等比）或 [x, y]。原版图层普遍为 0.7。</summary>
+            [JsonConverter(typeof(FloatArrayConverter))]
+            public float[] Scale { get; set; } = [1f];
+            /// <summary>初始旋转角度（度，逆时针为正）。</summary>
+            public float Rotation { get; set; } = 0f;
+            /// <summary>轴心 [x, y]，0–1，默认图片中心 (0.5, 0.5)。位置 / 缩放 / 旋转都围绕轴心。</summary>
+            public float[] Pivot { get; set; } = [0.5f, 0.5f];
+            /// <summary>初始不透明度 0–1。</summary>
+            public float Alpha { get; set; } = 1f;
+            /// <summary>初始着色（HTML 颜色，乘到图片上），默认白色即不改色。</summary>
+            public string Tint { get; set; }
+            /// <summary>叠放顺序，大的在上。</summary>
+            public int Order { get; set; } = 0;
+            /// <summary>初始是否可见。</summary>
+            public bool Visible { get; set; } = true;
+            /// <summary>
+            /// 图片的像素密度（多少像素 = 1 世界单位）。默认 100（原版道具 / 角色图层的值）；
+            /// 原版整幅舞台背景（2048×1024）用的是 50，配合 Scale 0.7 正好铺满舞台。
+            /// </summary>
+            public float PixelsPerUnit { get; set; } = 100f;
+        }
+
+        /// <summary>再现的一个演出步骤（一次 <c>@spawn ... params:N</c> 播放的内容）。</summary>
+        public class ModReenactmentStep
+        {
+            /// <summary>时长（秒）。剧本会等待这么久再继续（开幕动画另计）。</summary>
+            public float Duration { get; set; } = 1f;
+            /// <summary>各图层的关键帧轨道。没写到的图层保持上一步结束时的状态。</summary>
+            public ModReenactmentTrack[] Tracks { get; set; } = [];
+        }
+
+        /// <summary>某个图层在一个步骤内的关键帧轨道。</summary>
+        public class ModReenactmentTrack
+        {
+            /// <summary>图层名（<see cref="ModReenactmentLayer.Name"/>）。</summary>
+            public string Layer { get; set; } = "";
+            /// <summary>关键帧，按 <see cref="ModReenactmentKey.Time"/> 排序（加载时会自动排序）。</summary>
+            public ModReenactmentKey[] Keys { get; set; } = [];
+        }
+
+        /// <summary>
+        /// 关键帧。只写需要改变的属性；每个属性在相邻两个定义了它的关键帧之间插值，
+        /// 第一个定义它的关键帧之前保持该关键帧的值，最后一个之后保持不变。
+        /// </summary>
+        public class ModReenactmentKey
+        {
+            /// <summary>时间点（秒，相对本步骤开始）。</summary>
+            public float Time { get; set; } = 0f;
+            /// <summary>位置 [x, y]。</summary>
+            public float[] Position { get; set; }
+            /// <summary>缩放：一个数或 [x, y]。</summary>
+            [JsonConverter(typeof(FloatArrayConverter))]
+            public float[] Scale { get; set; }
+            /// <summary>旋转角度（度）。</summary>
+            public float? Rotation { get; set; }
+            /// <summary>不透明度 0–1。</summary>
+            public float? Alpha { get; set; }
+            /// <summary>着色（HTML 颜色）。</summary>
+            public string Tint { get; set; }
+            /// <summary>可见性（到达该时间点时切换，不插值）。</summary>
+            public bool? Visible { get; set; }
+            /// <summary>换图（mod 内相对路径；到达该时间点时切换，不插值）。</summary>
+            public string Sprite { get; set; }
+            /// <summary>
+            /// 从上一个关键帧到本关键帧的缓动：<c>Linear</c>（默认）、<c>InQuad</c>、<c>OutQuad</c>、<c>InOutQuad</c>、
+            /// <c>InCubic</c>、<c>OutCubic</c>、<c>InOutCubic</c>、<c>InSine</c>、<c>OutSine</c>、<c>InOutSine</c>、
+            /// <c>Step</c>（保持上一个值直到本关键帧时间点再跳变）。
+            /// </summary>
+            public string Ease { get; set; } = "Linear";
+        }
+
+        /// <summary>JSON 里既接受单个数字也接受数组的 float[] 转换器（用于等比 / 非等比缩放）。</summary>
+        public class FloatArrayConverter : JsonConverter<float[]>
+        {
+            public override float[] Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                if (reader.TokenType == JsonTokenType.Null) return null;
+                if (reader.TokenType == JsonTokenType.Number) return [reader.GetSingle()];
+                if (reader.TokenType == JsonTokenType.StartArray)
+                {
+                    var list = new List<float>();
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                    {
+                        if (reader.TokenType == JsonTokenType.Number) list.Add(reader.GetSingle());
+                        else throw new JsonException("Expected number in float array.");
+                    }
+                    return list.ToArray();
+                }
+                throw new JsonException("Expected number or array of numbers.");
+            }
+
+            public override void Write(Utf8JsonWriter writer, float[] value, JsonSerializerOptions options)
+            {
+                if (value == null) { writer.WriteNullValue(); return; }
+                writer.WriteStartArray();
+                foreach (var v in value) writer.WriteNumberValue(v);
+                writer.WriteEndArray();
+            }
+        }
+
         public class ModDescription
         {
             const string DefaultAuthor = "佚名";
@@ -547,6 +677,12 @@ namespace ManosabaLoader.ModManager
             /// 在剧本中可通过 <c>@gosubCutIn "&lt;Id&gt;" index:N</c> 使用。
             /// </summary>
             public ModObjectionCutIn[] CutIns { get; set; } = [];
+
+            /// <summary>
+            /// Mod 自定义再现演出。每个条目克隆一个原版 Reenact_* prefab 外壳，舞台图层与动画由 mod 定义，
+            /// 在剧本中通过 <c>@spawn "&lt;Id&gt;" params:N</c> / <c>@despawn "&lt;Id&gt;"</c> 使用。
+            /// </summary>
+            public ModReenactment[] Reenactments { get; set; } = [];
 
             /// <summary>
             /// 自定义章节名映射：脚本路径 → 存档画面显示的章节名（支持本地化）。

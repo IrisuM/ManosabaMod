@@ -146,5 +146,27 @@ namespace ManosabaLoader.Utils
             FieldHelperLogWarning($"Int field '{fieldName}' not found in hierarchy.");
             return fallback;
         }
+
+        /// <summary>按字段名写入值类型字段（int），遍历继承链查找。</summary>
+        public static unsafe bool SetIntField(Il2CppObjectBase obj, string fieldName, int value)
+        {
+            if (obj == null) return false;
+
+            IntPtr current = IL2CPP.il2cpp_object_get_class(obj.Pointer);
+            while (current != IntPtr.Zero)
+            {
+                IntPtr field = IL2CPP.il2cpp_class_get_field_from_name(current, fieldName);
+                if (field != IntPtr.Zero)
+                {
+                    int offset = (int)IL2CPP.il2cpp_field_get_offset(field);
+                    *(int*)(obj.Pointer + offset) = value;
+                    return true;
+                }
+                current = IL2CPP.il2cpp_class_get_parent(current);
+            }
+
+            FieldHelperLogWarning($"Int field '{fieldName}' not found, cannot write.");
+            return false;
+        }
     }
 }

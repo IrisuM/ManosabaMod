@@ -217,6 +217,7 @@ namespace ManosabaLoader
             ModResourceLoader.ScriptLoaderLogWarning += msg => { Log.LogWarning(string.Format("[ScriptLoader]\t{0}", msg)); };
             ModResourceLoader.ScriptLoaderLogError += msg => { Log.LogError(string.Format("[ScriptLoader]\t{0}", msg)); };
             ClassInjector.RegisterTypeInIl2Cpp<LocaleWatcherComponent>();
+            ClassInjector.RegisterTypeInIl2Cpp<ModReenactmentTicker>();
 
             // 子模块日志委托
             ModClueLoader.ClueLogMessage = msg => { Log.LogMessage(string.Format("[ClueLoader]\t{0}", msg)); };
@@ -286,9 +287,16 @@ namespace ManosabaLoader
             ModObjectionCutInLoader.CutInLogWarning = msg => { Log.LogWarning(string.Format("[CutInLoader]\t{0}", msg)); };
             ModObjectionCutInLoader.CutInLogError = msg => { Log.LogError(string.Format("[CutInLoader]\t{0}", msg)); };
 
+            ModReenactmentLoader.ReenactLogMessage = msg => { Log.LogMessage(string.Format("[ReenactLoader]\t{0}", msg)); };
+            ModReenactmentLoader.ReenactLogInfo = msg => { Log.LogInfo(string.Format("[ReenactLoader]\t{0}", msg)); };
+            ModReenactmentLoader.ReenactLogDebug = msg => { Log.LogDebug(string.Format("[ReenactLoader]\t{0}", msg)); };
+            ModReenactmentLoader.ReenactLogWarning = msg => { Log.LogWarning(string.Format("[ReenactLoader]\t{0}", msg)); };
+            ModReenactmentLoader.ReenactLogError = msg => { Log.LogError(string.Format("[ReenactLoader]\t{0}", msg)); };
+
             ModChoiceHandlerLoader.Init(harmony);
 
             ModObjectionCutInLoader.Init(harmony);
+            ModReenactmentLoader.Init(harmony);
 
             ModResourceLoader.Init(harmony, configScriptEnter.Value, configScriptEnterLabel.Value == "" ? null : configScriptEnterLabel.Value, isDirectMode.Value);
 
