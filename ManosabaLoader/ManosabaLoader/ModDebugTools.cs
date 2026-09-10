@@ -43,6 +43,48 @@ namespace ManosabaLoader
             return sb.ToString();
         }
 
+
+        /// <summary>
+        /// 把当前已加载的所有 Naninovel 剧本（含原版）用 Naninovel 自带的 ScriptAssetSerializer 还原成 .nani 文本，
+        /// 写到游戏目录下 dump_scripts/。用途：查看原版剧本怎么写（@print 参数、@spawn 再现的用法等）。
+        /// 调试组件里 F9 触发（不用 Ctrl 组合键，游戏用 Ctrl 做快进）。
+        /// </summary>
+        public static void DumpLoadedScripts()
+        {
+            ModDebugToolsLogMessage("DumpLoadedScripts");
+            try
+            {
+                var service = Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();
+                var serializer = new ScriptAssetSerializer(Compiler.Syntax.Cast<Naninovel.Parsing.ISyntax>());
+                string dir = Path.Combine(".", "dump_scripts");
+                Directory.CreateDirectory(dir);
+                int count = 0;
+
+                foreach (var res in service.scripts.ScriptLoader.GetAllLoaded().Cast<Il2CppSystem.Collections.Generic.List<Resource<Script>>>())
+                {
+                    if (res == null) continue;
+                    var script = res.Object;
+                    if (script == null) continue;
+                    string text = serializer.Serialize(script);
+                    string name = (res.Path ?? script.name ?? "unknown").Replace('/', '_').Replace('\\', '_');
+                    File.WriteAllText(Path.Combine(dir, name + ".nani"), text);
+                    count++;
+                }
+
+                var played = service.PlayedScript;
+                if (played != null)
+                {
+                    string name = (played.Path ?? played.name ?? "played").Replace('/', '_').Replace('\\', '_');
+                    File.WriteAllText(Path.Combine(dir, "_played_" + name + ".nani"), serializer.Serialize(played));
+                }
+
+                ModDebugToolsLogMessage(string.Format("Dumped {0} loaded script(s) to {1}", count, Path.GetFullPath(dir)));
+            }
+            catch (Exception ex)
+            {
+                ModDebugToolsLogError(string.Format("DumpLoadedScripts failed: {0}", ex));
+            }
+        }
         public static void ReleaseAllScript()
         {
             var service = Engine.GetServiceOrErr<WitchTrialsScriptPlayer>();

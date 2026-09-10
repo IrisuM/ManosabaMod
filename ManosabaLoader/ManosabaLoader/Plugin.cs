@@ -390,6 +390,12 @@ namespace ManosabaLoader
             {
                 ModDebugTools.ShowConsole();
             }
+
+            // 不用 Ctrl 组合键：游戏用 Ctrl 做快进
+            if (Keyboard.current.f9Key.wasReleasedThisFrame)
+            {
+                ModDebugTools.DumpLoadedScripts();
+            }
         }
 
         void OnGUI()
