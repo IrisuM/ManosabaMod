@@ -33,6 +33,7 @@ namespace ManosabaLoader
         private static readonly List<ProvisionSource> modInjectedTextSources = new();
         private static readonly List<ProvisionSource> modInjectedAudioSources = new();
         private static readonly List<ProvisionSource> modInjectedVoiceSources = new();
+        private static readonly Dictionary<string, List<ProvisionSource>> modInjectedBackgroundSources = new();
 
         private static ProvisionSource modProvisionSource = null;
         private static ProvisionSource modTextProvisionSource = null;
@@ -190,7 +191,8 @@ namespace ManosabaLoader
         internal static void ReInjectModProvisionSources()
         {
             ModReenactmentLoader.EnsureProvisionSource();
-            if (modInjectedTextSources.Count == 0 && modInjectedAudioSources.Count == 0 && modInjectedVoiceSources.Count == 0)
+            if (modInjectedTextSources.Count == 0 && modInjectedAudioSources.Count == 0 && modInjectedVoiceSources.Count == 0
+                && modInjectedBackgroundSources.Count == 0)
                 return;
             int count = 0;
             try
@@ -219,6 +221,15 @@ namespace ManosabaLoader
                         ps.System_Collections_IList_Insert(0, s);
                     count += modInjectedVoiceSources.Count;
                 }
+                if (modInjectedBackgroundSources.Count > 0)
+                {
+                    var service = Engine.GetServiceOrErr<BackgroundManagerExtended>();
+                    foreach (var entry in modInjectedBackgroundSources)
+                    {
+                        var ps = service.GetAppearanceLoader(entry.Key).Cast<ResourceLoader<Texture2D>>().ProvisionSources;
+                        count += ReInjectBackgroundSources(ps, entry.Value);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -226,6 +237,28 @@ namespace ManosabaLoader
             }
             if (count > 0)
                 ScriptLoaderLogDebug($"Re-injected {count} mod provision source(s) after locale/provision source rebuild.");
+        }
+
+        /// <summary>补回被语言切换清除的背景来源，保持 AddModLoader 的后注册优先顺序。</summary>
+        private static int ReInjectBackgroundSources(
+            Il2CppSystem.Collections.Generic.List<ProvisionSource> provisionSources,
+            List<ProvisionSource> modSources)
+        {
+            foreach (var source in modSources)
+            {
+                // ProvisionSource 是值类型，用 Contains/Remove 的值相等比较，不能比较包装对象的 Pointer。
+                if (provisionSources.Contains(source)) continue;
+
+                // 可能只有部分来源被清除；先移除残留项，再按初次注册顺序插入，避免改变 Mod 覆盖优先级。
+                foreach (var registered in modSources)
+                    while (provisionSources.Remove(registered)) { }
+                foreach (var registered in modSources)
+                    provisionSources.System_Collections_IList_Insert(0, registered);
+                return modSources.Count;
+            }
+
+            // 语言切换后会连续多帧重试；来源齐全时不重复插入。
+            return 0;
         }
 
         /// <summary>语言切换时刷新所有 mod 角色的 CharacterMetadata.DisplayName。</summary>
@@ -666,6 +699,9 @@ $$"""
                     localResourceProvider.AddConverter(new JpgOrPngToTextureConverter().Cast<IRawConverter<Texture2D>>());
                     var provisionSource = new ProvisionSource(localResourceProvider.Cast<IResourceProvider>(), Path.Combine(prefix, "Backgrounds", backId).Replace("\\", "/"));
                     ProvisionSources.System_Collections_IList_Insert(0, provisionSource);
+                    if (!modInjectedBackgroundSources.TryGetValue(backId, out var sources))
+                        modInjectedBackgroundSources[backId] = sources = new List<ProvisionSource>();
+                    sources.Add(provisionSource);
                     ScriptLoaderLogDebug(string.Format("{0} Path:{1}", service.GetIl2CppType().FullName, ProvisionSource.BuildFullPath(localResourceProvider.RootPath, provisionSource.PathPrefix)));
                 }
             }
